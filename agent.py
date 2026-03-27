@@ -438,7 +438,6 @@
 # if __name__ == "__main__":
 #     cli.run_app(server)
 
-
 import logging
 import os
 import json
@@ -492,7 +491,13 @@ async def entrypoint(ctx: JobContext):
         vad=ctx.proc.userdata["vad"],
     )
 
-    # Collect transcript during call
+    # DEBUG: intercept all session events to find correct event names
+    original_emit = session.emit
+    def debug_emit(event_name, *args, **kwargs):
+        logger.info(f"SESSION EVENT FIRED: {event_name}")
+        return original_emit(event_name, *args, **kwargs)
+    session.emit = debug_emit
+
     @session.on("user_speech_committed")
     def on_user(event):
         transcript.append({
@@ -511,19 +516,18 @@ async def entrypoint(ctx: JobContext):
         })
         logger.info(f"Julian: {event.transcript}")
 
-    # FIX 1: close_on_disconnect=False so session stays alive until we finish
     await session.start(
         agent=JulianAgent(),
         room=ctx.room,
         room_input_options=RoomInputOptions(close_on_disconnect=False),
     )
 
-    # FIX 2: wait for room disconnect instead of ctx.wait_for_disconnect()
+    # Wait for room disconnect
     disconnect_event = asyncio.Event()
     ctx.room.on("disconnected", lambda: disconnect_event.set())
     await disconnect_event.wait()
 
-    # FIX 3: give speech events a moment to flush before reading transcript
+    # Give speech events a moment to flush
     await asyncio.sleep(2)
 
     duration = int((datetime.utcnow() - start_time).total_seconds())
@@ -589,18 +593,11 @@ async def entrypoint(ctx: JobContext):
 
 
 async def get_recording_url(ctx) -> str | None:
-    """Wait for egress to finalize then return the S3 recording URL."""
     try:
         logger.info("Waiting 6s for egress to finalize...")
         await asyncio.sleep(6)
-        lk = api.LiveKitAPI(
-            url=LIVEKIT_URL,
-            api_key=LIVEKIT_API_KEY,
-            api_secret=LIVEKIT_API_SECRET,
-        )
-        egresses = await lk.egress.list_egress(
-            api.ListEgressRequest(room_name=ctx.room.name)
-        )
+        lk = api.LiveKitAPI(url=LIVEKIT_URL, api_key=LIVEKIT_API_KEY, api_secret=LIVEKIT_API_SECRET)
+        egresses = await lk.egress.list_egress(api.ListEgressRequest(room_name=ctx.room.name))
         for e in egresses.items:
             if hasattr(e, "file") and e.file and e.file.location:
                 logger.info(f"Recording URL: {e.file.location}")
@@ -611,16 +608,13 @@ async def get_recording_url(ctx) -> str | None:
 
 
 async def analyze_with_gpt(transcript: list, duration: int) -> dict:
-    """GPT-4o analyzes transcript for grammar, vocabulary, fluency."""
     try:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-
         transcript_text = "\n".join([
             f"{'User' if m['role'] == 'user' else 'Julian'}: {m['text']}"
             for m in transcript
         ])
-
         prompt = f"""Analyze this English language learning conversation and return a detailed JSON report.
 
 TRANSCRIPT:
@@ -658,7 +652,6 @@ Return ONLY valid JSON with no markdown or explanation:
   "areas_to_improve": [],
   "next_steps": []
 }}"""
-
         response = await client.chat.completions.create(
             model="gpt-4o",
             temperature=0.3,
@@ -670,21 +663,15 @@ Return ONLY valid JSON with no markdown or explanation:
             if raw.startswith("json"):
                 raw = raw[4:]
         return json.loads(raw.strip())
-
     except Exception as e:
         logger.error(f"GPT error: {e}")
         return {}
 
 
 async def analyze_with_hume(audio_url: str | None, transcript: list) -> dict:
-    """
-    If audio URL available: use Hume prosody model (real vocal analysis).
-    Otherwise: fallback to Hume language model (text-based emotion scoring).
-    """
     if not HUME_API_KEY:
         logger.warning("Hume: no API key")
         return {}
-
     if audio_url:
         return await _hume_audio(audio_url)
     else:
@@ -693,7 +680,6 @@ async def analyze_with_hume(audio_url: str | None, transcript: list) -> dict:
 
 
 async def _hume_audio(audio_url: str) -> dict:
-    """Hume prosody model — real pronunciation, fluency, confidence from voice."""
     try:
         async with httpx.AsyncClient(timeout=180) as client:
             res = await client.post(
@@ -704,20 +690,13 @@ async def _hume_audio(audio_url: str) -> dict:
             res.raise_for_status()
             job_id = res.json()["job_id"]
             logger.info(f"Hume audio job: {job_id}")
-
             for _ in range(30):
                 await asyncio.sleep(4)
-                status = await client.get(
-                    f"https://api.hume.ai/v0/batch/jobs/{job_id}",
-                    headers={"X-Hume-Api-Key": HUME_API_KEY},
-                )
+                status = await client.get(f"https://api.hume.ai/v0/batch/jobs/{job_id}", headers={"X-Hume-Api-Key": HUME_API_KEY})
                 state = status.json().get("state", {}).get("status", "")
                 logger.info(f"Hume status: {state}")
                 if state == "COMPLETED":
-                    pred = await client.get(
-                        f"https://api.hume.ai/v0/batch/jobs/{job_id}/predictions",
-                        headers={"X-Hume-Api-Key": HUME_API_KEY},
-                    )
+                    pred = await client.get(f"https://api.hume.ai/v0/batch/jobs/{job_id}/predictions", headers={"X-Hume-Api-Key": HUME_API_KEY})
                     return _parse_prosody(pred.json())
                 if state == "FAILED":
                     logger.error("Hume audio job failed")
@@ -728,13 +707,11 @@ async def _hume_audio(audio_url: str) -> dict:
 
 
 async def _hume_text(transcript: list) -> dict:
-    """Hume language model — emotion scoring from transcript text."""
     try:
         user_lines = [m["text"] for m in transcript if m["role"] == "user"]
         if not user_lines:
             return {}
         text_input = " ".join(user_lines)
-
         async with httpx.AsyncClient(timeout=60) as client:
             res = await client.post(
                 "https://api.hume.ai/v0/batch/jobs",
@@ -744,19 +721,12 @@ async def _hume_text(transcript: list) -> dict:
             res.raise_for_status()
             job_id = res.json()["job_id"]
             logger.info(f"Hume text job: {job_id}")
-
             for _ in range(20):
                 await asyncio.sleep(4)
-                status = await client.get(
-                    f"https://api.hume.ai/v0/batch/jobs/{job_id}",
-                    headers={"X-Hume-Api-Key": HUME_API_KEY},
-                )
+                status = await client.get(f"https://api.hume.ai/v0/batch/jobs/{job_id}", headers={"X-Hume-Api-Key": HUME_API_KEY})
                 state = status.json().get("state", {}).get("status", "")
                 if state == "COMPLETED":
-                    pred = await client.get(
-                        f"https://api.hume.ai/v0/batch/jobs/{job_id}/predictions",
-                        headers={"X-Hume-Api-Key": HUME_API_KEY},
-                    )
+                    pred = await client.get(f"https://api.hume.ai/v0/batch/jobs/{job_id}/predictions", headers={"X-Hume-Api-Key": HUME_API_KEY})
                     return _parse_language(pred.json())
                 if state == "FAILED":
                     return {}
@@ -767,29 +737,20 @@ async def _hume_text(transcript: list) -> dict:
 
 def _parse_prosody(predictions: dict) -> dict:
     try:
-        segs = (
-            predictions[0]["results"]["predictions"][0]
-            ["models"]["prosody"]["grouped_predictions"][0]["predictions"]
-        )
+        segs = predictions[0]["results"]["predictions"][0]["models"]["prosody"]["grouped_predictions"][0]["predictions"]
         totals = {}
-        count  = len(segs) or 1
+        count = len(segs) or 1
         for seg in segs:
             for e in seg["emotions"]:
                 totals[e["name"]] = totals.get(e["name"], 0) + e["score"]
         avg = {k: round(v / count, 3) for k, v in totals.items()}
-
-        confidence  = avg.get("Confidence",  0) + avg.get("Determination", 0)
+        confidence  = avg.get("Confidence", 0)  + avg.get("Determination", 0)
         nervousness = avg.get("Nervousness", 0) + avg.get("Anxiety", 0) + avg.get("Fear", 0)
-        excitement  = avg.get("Excitement",  0) + avg.get("Enthusiasm", 0) + avg.get("Joy", 0)
-
+        excitement  = avg.get("Excitement", 0)  + avg.get("Enthusiasm", 0) + avg.get("Joy", 0)
         segments = []
         for i, seg in enumerate(segs[:10]):
             top3 = sorted(seg["emotions"], key=lambda x: x["score"], reverse=True)[:3]
-            segments.append({
-                "segment": i + 1,
-                "top_emotions": [{"name": e["name"], "score": round(e["score"] * 100)} for e in top3]
-            })
-
+            segments.append({"segment": i + 1, "top_emotions": [{"name": e["name"], "score": round(e["score"] * 100)} for e in top3]})
         return {
             "confidence_score":  min(round(confidence  * 120), 100),
             "nervousness_score": min(round(nervousness * 120), 100),
@@ -805,23 +766,17 @@ def _parse_prosody(predictions: dict) -> dict:
 
 def _parse_language(predictions: dict) -> dict:
     try:
-        preds = (
-            predictions[0]["results"]["predictions"][0]
-            ["models"]["language"]["grouped_predictions"][0]["predictions"]
-        )
+        preds = predictions[0]["results"]["predictions"][0]["models"]["language"]["grouped_predictions"][0]["predictions"]
         totals = {}
-        count  = len(preds) or 1
+        count = len(preds) or 1
         for pred in preds:
             for e in pred.get("emotions", []):
                 totals[e["name"]] = totals.get(e["name"], 0) + e["score"]
         avg = {k: round(v / count, 3) for k, v in totals.items()}
-
-        confidence  = avg.get("Confidence",  0) + avg.get("Determination", 0)
+        confidence  = avg.get("Confidence", 0)  + avg.get("Determination", 0)
         nervousness = avg.get("Nervousness", 0) + avg.get("Anxiety", 0) + avg.get("Fear", 0)
-        excitement  = avg.get("Excitement",  0) + avg.get("Enthusiasm", 0) + avg.get("Joy", 0)
-
+        excitement  = avg.get("Excitement", 0)  + avg.get("Enthusiasm", 0) + avg.get("Joy", 0)
         top5 = sorted(avg.items(), key=lambda x: x[1], reverse=True)[:5]
-
         return {
             "confidence_score":  min(round(confidence  * 120), 100),
             "nervousness_score": min(round(nervousness * 120), 100),
