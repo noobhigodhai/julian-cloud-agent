@@ -437,7 +437,6 @@
 
 # if __name__ == "__main__":
 #     cli.run_app(server)
-
 import logging
 import os
 import json
@@ -491,30 +490,28 @@ async def entrypoint(ctx: JobContext):
         vad=ctx.proc.userdata["vad"],
     )
 
-    # DEBUG: intercept all session events to find correct event names
-    original_emit = session.emit
-    def debug_emit(event_name, *args, **kwargs):
-        logger.info(f"SESSION EVENT FIRED: {event_name}")
-        return original_emit(event_name, *args, **kwargs)
-    session.emit = debug_emit
+    # conversation_item_added fires for both user and agent turns in livekit-agents 1.5.x
+    @session.on("conversation_item_added")
+    def on_item_added(event):
+        try:
+            item = event.item
+            # item.role is "user" or "assistant"
+            # item.text_content is the transcript text
+            role = getattr(item, "role", None)
+            text = getattr(item, "text_content", None) or getattr(item, "text", None)
 
-    @session.on("user_speech_committed")
-    def on_user(event):
-        transcript.append({
-            "role": "user",
-            "text": event.transcript,
-            "time": datetime.utcnow().isoformat(),
-        })
-        logger.info(f"User: {event.transcript}")
-
-    @session.on("agent_speech_committed")
-    def on_agent(event):
-        transcript.append({
-            "role": "assistant",
-            "text": event.transcript,
-            "time": datetime.utcnow().isoformat(),
-        })
-        logger.info(f"Julian: {event.transcript}")
+            if role and text:
+                transcript.append({
+                    "role": role,
+                    "text": text,
+                    "time": datetime.utcnow().isoformat(),
+                })
+                label = "User" if role == "user" else "Julian"
+                logger.info(f"{label}: {text}")
+            else:
+                logger.info(f"conversation_item_added — role={role} text={text} attrs={dir(item)}")
+        except Exception as e:
+            logger.error(f"Error in on_item_added: {e} | event={event} | dir={dir(event)}")
 
     await session.start(
         agent=JulianAgent(),
