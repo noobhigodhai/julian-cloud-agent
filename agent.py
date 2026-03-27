@@ -123,7 +123,9 @@ async def entrypoint(ctx: JobContext):
     )
 
     # Wait for call to end
-    await ctx.wait_for_disconnect()
+    disconnect_event = asyncio.Event()
+    ctx.room.on("disconnected", lambda: disconnect_event.set())
+    await disconnect_event.wait()
 
     duration = int((datetime.utcnow() - start_time).total_seconds())
     logger.info(f"Call ended. Duration: {duration}s | Lines: {len(transcript)}")
