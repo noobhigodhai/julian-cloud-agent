@@ -1259,19 +1259,26 @@ async def entrypoint(ctx: JobContext):
     participant_identity = None
     user_email = None
     user_id = None
+
+    logger.info(f"Remote participants count: {len(ctx.room.remote_participants)}")
+
     for p in ctx.room.remote_participants.values():
         participant_identity = p.identity
+        logger.info(f"Participant identity: {participant_identity}")
+        logger.info(f"Raw metadata: {p.metadata}")  # ← debug
+
         try:
             meta = json.loads(p.metadata or "{}")
+            logger.info(f"Parsed metadata: {meta}")  # ← debug
             user_email = meta.get("email")
             user_id    = meta.get("userId")
-        except Exception:
-            pass
+            logger.info(f"userId from metadata: {user_id}")  # ← debug
+        except Exception as e:
+            logger.error(f"Metadata parse error: {e}")
         break
 
     logger.info(f"Sending transcript | identity: {participant_identity} | userId: {user_id} | lines: {len(transcript)}")
 
-    # Send transcript to server — server handles S3 URL + GPT + Hume + MongoDB
     payload = {
         "roomName":            ctx.room.name,
         "participantIdentity": participant_identity,
