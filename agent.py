@@ -1173,7 +1173,6 @@
 
 # if __name__ == "__main__":
 #     cli.run_app(server)
-
 import logging
 import os
 import json
@@ -1214,6 +1213,40 @@ async def entrypoint(ctx: JobContext):
     transcript = []
     start_time = datetime.utcnow()
 
+    # ── Read participant metadata BEFORE session starts ───────────────────────
+    participant_identity = None
+    user_email = None
+    user_id = None
+
+    logger.info(f"Remote participants at start: {len(ctx.room.remote_participants)}")
+    for p in ctx.room.remote_participants.values():
+        participant_identity = p.identity
+        logger.info(f"Participant: {participant_identity} | raw metadata: {p.metadata}")
+        try:
+            meta = json.loads(p.metadata or "{}")
+            user_email = meta.get("email")
+            user_id    = meta.get("userId")
+            logger.info(f"✅ Got userId at call start: {user_id}")
+        except Exception as e:
+            logger.error(f"Metadata parse error: {e}")
+        break
+
+    # Also listen for participants joining later (in case agent joins first)
+    def on_participant_connected(participant):
+        nonlocal participant_identity, user_email, user_id
+        if participant_identity is None:
+            participant_identity = participant.identity
+            logger.info(f"Participant joined: {participant_identity} | metadata: {participant.metadata}")
+            try:
+                meta = json.loads(participant.metadata or "{}")
+                user_email = meta.get("email")
+                user_id    = meta.get("userId")
+                logger.info(f"✅ Got userId on join: {user_id}")
+            except Exception as e:
+                logger.error(f"Metadata parse error on join: {e}")
+
+    ctx.room.on("participant_connected", on_participant_connected)
+
     session = AgentSession(
         stt=deepgram.STT(model="nova-2", language="en"),
         llm=openai.LLM(model="gpt-4o-mini"),
@@ -1250,32 +1283,11 @@ async def entrypoint(ctx: JobContext):
 
     duration = int((datetime.utcnow() - start_time).total_seconds())
     logger.info(f"Call ended. Duration: {duration}s | Lines: {len(transcript)}")
+    logger.info(f"Final: identity={participant_identity} | userId={user_id}")
 
     if len(transcript) == 0:
         logger.warning("No transcript — skipping")
         return
-
-    # Extract participant info from metadata
-    participant_identity = None
-    user_email = None
-    user_id = None
-
-    logger.info(f"Remote participants count: {len(ctx.room.remote_participants)}")
-
-    for p in ctx.room.remote_participants.values():
-        participant_identity = p.identity
-        logger.info(f"Participant identity: {participant_identity}")
-        logger.info(f"Raw metadata: {p.metadata}")  # ← debug
-
-        try:
-            meta = json.loads(p.metadata or "{}")
-            logger.info(f"Parsed metadata: {meta}")  # ← debug
-            user_email = meta.get("email")
-            user_id    = meta.get("userId")
-            logger.info(f"userId from metadata: {user_id}")  # ← debug
-        except Exception as e:
-            logger.error(f"Metadata parse error: {e}")
-        break
 
     logger.info(f"Sending transcript | identity: {participant_identity} | userId: {user_id} | lines: {len(transcript)}")
 
@@ -1296,7 +1308,7 @@ async def entrypoint(ctx: JobContext):
                 json=payload,
                 headers={"Content-Type": "application/json"},
             )
-            logger.info(f"✅ Transcript sent to server: {res.status_code}")
+            logger.info(f"✅ Transcript sent: {res.status_code}")
     except Exception as e:
         logger.error(f"Failed to send transcript: {e}")
 
