@@ -1,1 +1,2 @@
 livekit-agents[openai,deepgram,silero]
+openai
