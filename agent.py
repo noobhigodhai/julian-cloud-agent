@@ -1398,7 +1398,7 @@ from livekit.plugins import openai, deepgram
 
 logger = logging.getLogger("julian-cloud-agent")
 
-BACKEND_URL    = os.environ.get("BACKEND_URL", "https://specker.ai")
+BACKEND_URL = os.environ.get("BACKEND_URL", "https://specker.ai")
 
 class JulianAgent(Agent):
     def __init__(self) -> None:
@@ -1426,7 +1426,6 @@ async def entrypoint(ctx: JobContext):
     transcript = []
     start_time = datetime.utcnow()
 
-    # Read participant metadata
     participant_identity = None
     user_email = None
     user_id = None
@@ -1497,7 +1496,6 @@ async def entrypoint(ctx: JobContext):
         logger.warning("No transcript — skipping")
         return
 
-    # Send transcript to server — server handles all analysis in background
     payload = {
         "roomName":            ctx.room.name,
         "participantIdentity": participant_identity,
@@ -1508,7 +1506,8 @@ async def entrypoint(ctx: JobContext):
         "timestamp":           datetime.utcnow().isoformat(),
     }
 
-    try:
+    # Use shield to prevent cancellation when process starts shutting down
+    async def _send():
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
                 f"{BACKEND_URL}/api/call-report",
@@ -1516,6 +1515,15 @@ async def entrypoint(ctx: JobContext):
                 headers={"Content-Type": "application/json"},
             )
             logger.info(f"✅ Transcript sent: {res.status_code}")
+
+    try:
+        await asyncio.shield(_send())
+    except asyncio.CancelledError:
+        logger.warning("Send was cancelled — retrying with new event loop task")
+        # Last resort: fire and forget with a new task
+        loop = asyncio.get_event_loop()
+        loop.create_task(_send())
+        await asyncio.sleep(5)  # Give it time to complete
     except Exception as e:
         logger.error(f"Failed to send transcript: {e}")
 
