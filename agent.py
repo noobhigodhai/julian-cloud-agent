@@ -1506,7 +1506,6 @@ async def entrypoint(ctx: JobContext):
         "timestamp":           datetime.utcnow().isoformat(),
     }
 
-    # Use shield to prevent cancellation when process starts shutting down
     async def _send():
         async with httpx.AsyncClient(timeout=30) as client:
             res = await client.post(
@@ -1519,11 +1518,10 @@ async def entrypoint(ctx: JobContext):
     try:
         await asyncio.shield(_send())
     except asyncio.CancelledError:
-        logger.warning("Send was cancelled — retrying with new event loop task")
-        # Last resort: fire and forget with a new task
+        logger.warning("Cancelled — retrying")
         loop = asyncio.get_event_loop()
         loop.create_task(_send())
-        await asyncio.sleep(5)  # Give it time to complete
+        await asyncio.sleep(5)
     except Exception as e:
         logger.error(f"Failed to send transcript: {e}")
 
