@@ -4,7 +4,7 @@ import json
 import httpx
 import asyncio
 from datetime import datetime
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
+from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, RoomOptions, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram
 
@@ -91,8 +91,24 @@ async def entrypoint(ctx: JobContext):
         if not transcript:
             logger.warning("No transcript — skipping")
             return
+
         duration = int((datetime.utcnow() - start_time).total_seconds())
         logger.info(f"Sending transcript | duration: {duration}s | lines: {len(transcript)}")
+
+        # Step 1: Send transcript to app via LiveKit data channel (instant)
+        try:
+            data = json.dumps({
+                "type":       "transcript",
+                "transcript": transcript,
+                "duration":   duration,
+            }).encode()
+            await ctx.room.local_participant.publish_data(data, reliable=True)
+            logger.info("✅ Transcript sent via data channel to app")
+            await asyncio.sleep(1)  # give time to deliver
+        except Exception as e:
+            logger.error(f"Data channel error: {e}")
+
+        # Step 2: Send to server for MongoDB storage + Hume analysis (background)
         payload = {
             "roomName":            ctx.room.name,
             "participantIdentity": participant_identity,
@@ -109,13 +125,17 @@ async def entrypoint(ctx: JobContext):
                     json=payload,
                     headers={"Content-Type": "application/json"},
                 )
-                logger.info(f"✅ Transcript sent: {res.status_code}")
+                logger.info(f"✅ Transcript sent to server: {res.status_code}")
         except Exception as e:
-            logger.error(f"Failed to send: {e}")
+            logger.error(f"Failed to send to server: {e}")
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    await session.start(agent=JulianAgent(), room=ctx.room)
+    await session.start(
+        agent=JulianAgent(),
+        room=ctx.room,
+        room_options=RoomOptions(close_on_disconnect=False),
+    )
 
     disconnect_event = asyncio.Event()
     ctx.room.on("disconnected", lambda: disconnect_event.set())
