@@ -1173,6 +1173,219 @@
 
 # if __name__ == "__main__":
 #     cli.run_app(server)
+# import logging
+# import os
+# import json
+# import httpx
+# import asyncio
+# from datetime import datetime
+# from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, RoomInputOptions, cli
+# from livekit.plugins import silero
+# from livekit.plugins import openai, deepgram
+
+# logger = logging.getLogger("julian-cloud-agent")
+
+# BACKEND_URL    = os.environ.get("BACKEND_URL", "https://specker.ai")
+# OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+# class JulianAgent(Agent):
+#     def __init__(self) -> None:
+#         super().__init__(
+#             instructions="""You are Julian, a warm and empathetic AI friend on a phone call.
+# Keep responses short — 1 to 2 sentences. Be warm and natural. English only.
+# Ask follow-up questions to keep the conversation going.""",
+#         )
+
+#     async def on_enter(self):
+#         await self.session.generate_reply(
+#             instructions="Greet the user warmly and ask how they are doing today.",
+#             allow_interruptions=True,
+#         )
+
+# server = AgentServer()
+
+# def prewarm(proc: JobProcess):
+#     proc.userdata["vad"] = silero.VAD.load()
+
+# server.setup_fnc = prewarm
+
+
+# async def analyze_with_gpt(transcript: list, duration: int) -> dict:
+#     try:
+#         from openai import AsyncOpenAI
+#         client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+#         transcript_text = "\n".join([
+#             f"{'User' if m['role'] == 'user' else 'Julian'}: {m['text']}"
+#             for m in transcript
+#         ])
+#         prompt = f"""Analyze this English language learning conversation and return a detailed JSON report.
+
+# TRANSCRIPT:
+# {transcript_text}
+
+# DURATION: {duration // 60} minutes {duration % 60} seconds
+
+# Return ONLY valid JSON with no markdown or explanation:
+# {{
+#   "overall_score": <0-100>,
+#   "summary": "<2-3 sentence summary>",
+#   "grammar": {{
+#     "score": <0-100>,
+#     "mistakes": [{{"original": "", "corrected": "", "explanation": ""}}],
+#     "feedback": "<1-2 sentences>"
+#   }},
+#   "vocabulary": {{
+#     "score": <0-100>,
+#     "advanced_words_used": [],
+#     "suggestions": [],
+#     "feedback": "<1-2 sentences>"
+#   }},
+#   "fluency": {{
+#     "score": <0-100>,
+#     "filler_words_detected": [],
+#     "pace": "<too fast | good | too slow>",
+#     "feedback": "<1-2 sentences>"
+#   }},
+#   "confidence": {{
+#     "score": <0-100>,
+#     "feedback": "<1-2 sentences>"
+#   }},
+#   "pronunciation_tips": [{{"word": "", "tip": ""}}],
+#   "strengths": [],
+#   "areas_to_improve": [],
+#   "next_steps": []
+# }}"""
+#         response = await client.chat.completions.create(
+#             model="gpt-4o",
+#             temperature=0.3,
+#             messages=[{"role": "user", "content": prompt}],
+#         )
+#         raw = response.choices[0].message.content.strip()
+#         if raw.startswith("```"):
+#             raw = raw.split("```")[1]
+#             if raw.startswith("json"):
+#                 raw = raw[4:]
+#         return json.loads(raw.strip())
+#     except Exception as e:
+#         logger.error(f"GPT analysis error: {e}")
+#         return {}
+
+
+# @server.rtc_session(agent_name="julian-cloud")
+# async def entrypoint(ctx: JobContext):
+#     transcript = []
+#     start_time = datetime.utcnow()
+
+#     # ── Read participant metadata BEFORE session starts ───────────────────────
+#     participant_identity = None
+#     user_email = None
+#     user_id = None
+
+#     logger.info(f"Remote participants at start: {len(ctx.room.remote_participants)}")
+#     for p in ctx.room.remote_participants.values():
+#         participant_identity = p.identity
+#         logger.info(f"Participant: {participant_identity} | raw metadata: {p.metadata}")
+#         try:
+#             meta = json.loads(p.metadata or "{}")
+#             user_email = meta.get("email")
+#             user_id    = meta.get("userId")
+#             logger.info(f"✅ Got userId at call start: {user_id}")
+#         except Exception as e:
+#             logger.error(f"Metadata parse error: {e}")
+#         break
+
+#     # Also listen for participants joining later (in case agent joins first)
+#     def on_participant_connected(participant):
+#         nonlocal participant_identity, user_email, user_id
+#         if participant_identity is None:
+#             participant_identity = participant.identity
+#             logger.info(f"Participant joined: {participant_identity} | metadata: {participant.metadata}")
+#             try:
+#                 meta = json.loads(participant.metadata or "{}")
+#                 user_email = meta.get("email")
+#                 user_id    = meta.get("userId")
+#                 logger.info(f"✅ Got userId on join: {user_id}")
+#             except Exception as e:
+#                 logger.error(f"Metadata parse error on join: {e}")
+
+#     ctx.room.on("participant_connected", on_participant_connected)
+
+#     session = AgentSession(
+#         stt=deepgram.STT(model="nova-2", language="en"),
+#         llm=openai.LLM(model="gpt-4o-mini"),
+#         tts=deepgram.TTS(model="aura-2-thalia-en"),
+#         vad=ctx.proc.userdata["vad"],
+#     )
+
+#     @session.on("conversation_item_added")
+#     def on_item_added(event):
+#         try:
+#             item = event.item
+#             role = getattr(item, "role", None)
+#             text = getattr(item, "text_content", None) or getattr(item, "text", None)
+#             if role and text:
+#                 transcript.append({
+#                     "role": role,
+#                     "text": text,
+#                     "time": datetime.utcnow().isoformat(),
+#                 })
+#                 logger.info(f"{'User' if role == 'user' else 'Julian'}: {text}")
+#         except Exception as e:
+#             logger.error(f"Error in on_item_added: {e}")
+
+#     await session.start(
+#         agent=JulianAgent(),
+#         room=ctx.room,
+#         room_input_options=RoomInputOptions(close_on_disconnect=False),
+#     )
+
+#     disconnect_event = asyncio.Event()
+#     ctx.room.on("disconnected", lambda: disconnect_event.set())
+#     await disconnect_event.wait()
+#     await asyncio.sleep(1)
+
+#     duration = int((datetime.utcnow() - start_time).total_seconds())
+#     logger.info(f"Call ended. Duration: {duration}s | Lines: {len(transcript)}")
+#     logger.info(f"Final: identity={participant_identity} | userId={user_id}")
+
+#     if len(transcript) == 0:
+#         logger.warning("No transcript — skipping")
+#         return
+
+#     logger.info(f"Sending transcript | identity: {participant_identity} | userId: {user_id} | lines: {len(transcript)}")
+
+#     logger.info("Running GPT grammar/sentence analysis...")
+#     gpt_result = await analyze_with_gpt(transcript, duration)
+#     if gpt_result:
+#         logger.info(f"GPT analysis done. Overall score: {gpt_result.get('overall_score')}")
+#     else:
+#         logger.warning("GPT analysis returned empty result")
+
+#     payload = {
+#         "roomName":            ctx.room.name,
+#         "participantIdentity": participant_identity,
+#         "userEmail":           user_email,
+#         "userId":              user_id,
+#         "duration":            duration,
+#         "transcript":          transcript,
+#         "analysis":            gpt_result,
+#         "timestamp":           datetime.utcnow().isoformat(),
+#     }
+
+#     try:
+#         async with httpx.AsyncClient(timeout=30) as client:
+#             res = await client.post(
+#                 f"{BACKEND_URL}/api/call-report",
+#                 json=payload,
+#                 headers={"Content-Type": "application/json"},
+#             )
+#             logger.info(f"✅ Report sent: {res.status_code}")
+#     except Exception as e:
+#         logger.error(f"Failed to send transcript: {e}")
+
+
+# if __name__ == "__main__":
+#     cli.run_app(server)
 import logging
 import os
 import json
@@ -1186,7 +1399,6 @@ from livekit.plugins import openai, deepgram
 logger = logging.getLogger("julian-cloud-agent")
 
 BACKEND_URL    = os.environ.get("BACKEND_URL", "https://specker.ai")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 class JulianAgent(Agent):
     def __init__(self) -> None:
@@ -1209,102 +1421,36 @@ def prewarm(proc: JobProcess):
 
 server.setup_fnc = prewarm
 
-
-async def analyze_with_gpt(transcript: list, duration: int) -> dict:
-    try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-        transcript_text = "\n".join([
-            f"{'User' if m['role'] == 'user' else 'Julian'}: {m['text']}"
-            for m in transcript
-        ])
-        prompt = f"""Analyze this English language learning conversation and return a detailed JSON report.
-
-TRANSCRIPT:
-{transcript_text}
-
-DURATION: {duration // 60} minutes {duration % 60} seconds
-
-Return ONLY valid JSON with no markdown or explanation:
-{{
-  "overall_score": <0-100>,
-  "summary": "<2-3 sentence summary>",
-  "grammar": {{
-    "score": <0-100>,
-    "mistakes": [{{"original": "", "corrected": "", "explanation": ""}}],
-    "feedback": "<1-2 sentences>"
-  }},
-  "vocabulary": {{
-    "score": <0-100>,
-    "advanced_words_used": [],
-    "suggestions": [],
-    "feedback": "<1-2 sentences>"
-  }},
-  "fluency": {{
-    "score": <0-100>,
-    "filler_words_detected": [],
-    "pace": "<too fast | good | too slow>",
-    "feedback": "<1-2 sentences>"
-  }},
-  "confidence": {{
-    "score": <0-100>,
-    "feedback": "<1-2 sentences>"
-  }},
-  "pronunciation_tips": [{{"word": "", "tip": ""}}],
-  "strengths": [],
-  "areas_to_improve": [],
-  "next_steps": []
-}}"""
-        response = await client.chat.completions.create(
-            model="gpt-4o",
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = response.choices[0].message.content.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
-    except Exception as e:
-        logger.error(f"GPT analysis error: {e}")
-        return {}
-
-
 @server.rtc_session(agent_name="julian-cloud")
 async def entrypoint(ctx: JobContext):
     transcript = []
     start_time = datetime.utcnow()
 
-    # ── Read participant metadata BEFORE session starts ───────────────────────
+    # Read participant metadata
     participant_identity = None
     user_email = None
     user_id = None
 
-    logger.info(f"Remote participants at start: {len(ctx.room.remote_participants)}")
     for p in ctx.room.remote_participants.values():
         participant_identity = p.identity
-        logger.info(f"Participant: {participant_identity} | raw metadata: {p.metadata}")
         try:
             meta = json.loads(p.metadata or "{}")
             user_email = meta.get("email")
             user_id    = meta.get("userId")
-            logger.info(f"✅ Got userId at call start: {user_id}")
+            logger.info(f"Participant: {participant_identity} | userId: {user_id}")
         except Exception as e:
             logger.error(f"Metadata parse error: {e}")
         break
 
-    # Also listen for participants joining later (in case agent joins first)
     def on_participant_connected(participant):
         nonlocal participant_identity, user_email, user_id
         if participant_identity is None:
             participant_identity = participant.identity
-            logger.info(f"Participant joined: {participant_identity} | metadata: {participant.metadata}")
             try:
                 meta = json.loads(participant.metadata or "{}")
                 user_email = meta.get("email")
                 user_id    = meta.get("userId")
-                logger.info(f"✅ Got userId on join: {user_id}")
+                logger.info(f"Participant joined: {participant_identity} | userId: {user_id}")
             except Exception as e:
                 logger.error(f"Metadata parse error on join: {e}")
 
@@ -1342,25 +1488,16 @@ async def entrypoint(ctx: JobContext):
     disconnect_event = asyncio.Event()
     ctx.room.on("disconnected", lambda: disconnect_event.set())
     await disconnect_event.wait()
-    await asyncio.sleep(1)
+    await asyncio.sleep(2)
 
     duration = int((datetime.utcnow() - start_time).total_seconds())
     logger.info(f"Call ended. Duration: {duration}s | Lines: {len(transcript)}")
-    logger.info(f"Final: identity={participant_identity} | userId={user_id}")
 
     if len(transcript) == 0:
         logger.warning("No transcript — skipping")
         return
 
-    logger.info(f"Sending transcript | identity: {participant_identity} | userId: {user_id} | lines: {len(transcript)}")
-
-    logger.info("Running GPT grammar/sentence analysis...")
-    gpt_result = await analyze_with_gpt(transcript, duration)
-    if gpt_result:
-        logger.info(f"GPT analysis done. Overall score: {gpt_result.get('overall_score')}")
-    else:
-        logger.warning("GPT analysis returned empty result")
-
+    # Send transcript to server — server handles all analysis in background
     payload = {
         "roomName":            ctx.room.name,
         "participantIdentity": participant_identity,
@@ -1368,7 +1505,6 @@ async def entrypoint(ctx: JobContext):
         "userId":              user_id,
         "duration":            duration,
         "transcript":          transcript,
-        "analysis":            gpt_result,
         "timestamp":           datetime.utcnow().isoformat(),
     }
 
@@ -1379,7 +1515,7 @@ async def entrypoint(ctx: JobContext):
                 json=payload,
                 headers={"Content-Type": "application/json"},
             )
-            logger.info(f"✅ Report sent: {res.status_code}")
+            logger.info(f"✅ Transcript sent: {res.status_code}")
     except Exception as e:
         logger.error(f"Failed to send transcript: {e}")
 
