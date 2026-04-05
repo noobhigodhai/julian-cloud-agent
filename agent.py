@@ -77,14 +77,30 @@ async def entrypoint(ctx: JobContext):
             role = getattr(item, "role", None)
             text = getattr(item, "text_content", None) or getattr(item, "text", None)
             if role and text:
-                transcript.append({
+                entry = {
                     "role": role,
                     "text": text,
                     "time": datetime.utcnow().isoformat(),
-                })
+                }
+                transcript.append(entry)
                 logger.info(f"{'User' if role == 'user' else 'Julian'}: {text}")
+
+                # Save user utterances to DB in real-time
+                if role == "user" and user_id:
+                    asyncio.create_task(_save_utterance(user_id, ctx.room.name, entry))
         except Exception as e:
             logger.error(f"Error in on_item_added: {e}")
+
+    async def _save_utterance(uid, room_name, entry):
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(
+                    f"{BACKEND_URL}/api/live-transcript",
+                    json={"userId": uid, "roomName": room_name, "entry": entry},
+                    headers={"Content-Type": "application/json"},
+                )
+        except Exception as e:
+            logger.warning(f"Live transcript save failed: {e}")
 
     async def on_shutdown():
         logger.info(f"Shutdown callback | Lines: {len(transcript)}")
@@ -104,11 +120,11 @@ async def entrypoint(ctx: JobContext):
             }).encode()
             await ctx.room.local_participant.publish_data(data, reliable=True)
             logger.info("✅ Transcript sent via data channel to app")
-            await asyncio.sleep(1)  # give time to deliver
+            await asyncio.sleep(1)
         except Exception as e:
             logger.error(f"Data channel error: {e}")
 
-        # Step 2: Send to server for MongoDB storage + Hume analysis (background)
+        # Step 2: Send full transcript to server for MongoDB + Hume analysis
         payload = {
             "roomName":            ctx.room.name,
             "participantIdentity": participant_identity,
