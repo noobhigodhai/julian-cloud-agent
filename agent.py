@@ -4,7 +4,7 @@ import json
 import httpx
 import asyncio
 from datetime import datetime
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, RoomOptions, cli
+from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, RoomInputOptions, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram
 
@@ -150,7 +150,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(
         agent=JulianAgent(),
         room=ctx.room,
-        room_options=RoomOptions(close_on_disconnect=False),
+        room_options=RoomInputOptions(close_on_disconnect=False),
     )
 
     disconnect_event = asyncio.Event()
