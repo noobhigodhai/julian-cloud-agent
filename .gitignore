@@ -1,0 +1,9 @@
+# Google Cloud credentials
+*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+.venv/

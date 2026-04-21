@@ -41,13 +41,17 @@ LANGUAGE_NAMES = {
 
 def get_google_tts(native_lang: str | None):
     """
-    Always use an English voice for code-switching quality.
-    Neural2 voices handle mixed-language text much better than native voices.
+    Always use English Neural2 voice for best code-switching quality.
+    Credentials loaded from GOOGLE_CREDENTIALS_JSON env variable.
     """
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+    creds = json.loads(creds_json) if creds_json else None
+
     return google.TTS(
         voice_name="en-US-Neural2-F",
         language="en-US",
         gender="female",
+        credentials_info=creds,
     )
 
 def build_instructions(topic: str | None, native_lang_code: str | None) -> str:
@@ -72,7 +76,7 @@ Rules:
 - Example style (Hindi): "Arre yaar, that was really good! Aur bolo, kya chal raha hai?"
 - Keep it natural — don't translate every word, just mix freely like a bilingual friend.
 - NEVER speak 100% in {lang_name} — always keep English as the base.
-- IMPORTANT: Write ONLY the words to be spoken. No stage directions, no brackets, no labels like 'Julian:'.
+- IMPORTANT: Write ONLY the words to be spoken. No stage directions, no brackets, no labels.
 """
     else:
         lang_line = "Speak naturally in English only."
@@ -135,7 +139,7 @@ async def entrypoint(ctx: JobContext):
     topic                = None
     native_lang          = None
 
-    # ── Wait for participant so we have metadata before starting agent ────────
+    # ── Wait for participant so we have metadata BEFORE starting agent ────────
     participant_joined = asyncio.Event()
 
     def on_participant_connected(participant):
@@ -167,11 +171,11 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"🎯 Starting agent | topic: {topic} | lang: {native_lang}")
 
-    # ── Session with Google TTS ───────────────────────────────────────────────
+    # ── Session ───────────────────────────────────────────────────────────────
     session = AgentSession(
         stt=deepgram.STT(model="nova-2", language="en"),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_google_tts(native_lang),   # ← Google TTS
+        tts=get_google_tts(native_lang),
         vad=ctx.proc.userdata["vad"],
     )
 
