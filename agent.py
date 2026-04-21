@@ -6,12 +6,11 @@ import asyncio
 from datetime import datetime
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
-from livekit.plugins import openai, deepgram
+from livekit.plugins import openai, deepgram, google
 
 logger = logging.getLogger("julian-cloud-agent")
 BACKEND_URL = os.environ.get("BACKEND_URL", "https://specker.ai")
 
-# Map of native language codes to language names for the prompt
 LANGUAGE_NAMES = {
     "tl":  "Filipino/Tagalog",
     "hi":  "Hindi",
@@ -40,6 +39,17 @@ LANGUAGE_NAMES = {
     "en":  "English",
 }
 
+def get_google_tts(native_lang: str | None):
+    """
+    Always use an English voice for code-switching quality.
+    Neural2 voices handle mixed-language text much better than native voices.
+    """
+    return google.TTS(
+        voice_name="en-US-Neural2-F",
+        language="en-US",
+        gender="female",
+    )
+
 def build_instructions(topic: str | None, native_lang_code: str | None) -> str:
     lang_name = LANGUAGE_NAMES.get(native_lang_code or "", None)
 
@@ -62,6 +72,7 @@ Rules:
 - Example style (Hindi): "Arre yaar, that was really good! Aur bolo, kya chal raha hai?"
 - Keep it natural — don't translate every word, just mix freely like a bilingual friend.
 - NEVER speak 100% in {lang_name} — always keep English as the base.
+- IMPORTANT: Write ONLY the words to be spoken. No stage directions, no brackets, no labels like 'Julian:'.
 """
     else:
         lang_line = "Speak naturally in English only."
@@ -91,7 +102,8 @@ class JulianAgent(Agent):
             greeting = (
                 f"Greet the user warmly in {lang_name} first (one short phrase), "
                 f"then switch to a mix of {lang_name} and English. "
-                f"Ask how they are doing today."
+                f"Ask how they are doing today. "
+                f"Speak ONLY the words — no labels, no brackets, no stage directions."
             )
         else:
             greeting = "Greet the user warmly in English and ask how they are doing today."
@@ -117,46 +129,49 @@ async def entrypoint(ctx: JobContext):
     transcript = []
     start_time = datetime.utcnow()
 
-    # ── Read participant metadata ─────────────────────────────────────────────
     participant_identity = None
     user_email           = None
     user_id              = None
     topic                = None
     native_lang          = None
 
-    for p in ctx.room.remote_participants.values():
-        participant_identity = p.identity
-        try:
-            meta        = json.loads(p.metadata or "{}")
-            user_email  = meta.get("email")
-            user_id     = meta.get("userId")
-            topic       = meta.get("topic")        # e.g. "travel"
-            native_lang = meta.get("nativeLang")   # e.g. "tl", "hi"
-            logger.info(f"Participant: {participant_identity} | userId: {user_id} | topic: {topic} | lang: {native_lang}")
-        except Exception as e:
-            logger.error(f"Metadata parse error: {e}")
-        break
+    # ── Wait for participant so we have metadata before starting agent ────────
+    participant_joined = asyncio.Event()
 
     def on_participant_connected(participant):
         nonlocal participant_identity, user_email, user_id, topic, native_lang
-        if participant_identity is None:
-            participant_identity = participant.identity
-            try:
-                meta        = json.loads(participant.metadata or "{}")
-                user_email  = meta.get("email")
-                user_id     = meta.get("userId")
-                topic       = meta.get("topic")
-                native_lang = meta.get("nativeLang")
-                logger.info(f"Participant joined: {participant_identity} | userId: {user_id} | topic: {topic} | lang: {native_lang}")
-            except Exception as e:
-                logger.error(f"Metadata parse error on join: {e}")
+        participant_identity = participant.identity
+        try:
+            meta        = json.loads(participant.metadata or "{}")
+            user_email  = meta.get("email")
+            user_id     = meta.get("userId")
+            topic       = meta.get("topic")
+            native_lang = meta.get("nativeLang")
+            logger.info(f"✅ Participant joined: {participant_identity} | topic: {topic} | lang: {native_lang}")
+        except Exception as e:
+            logger.error(f"Metadata parse error: {e}")
+        participant_joined.set()
 
-    ctx.room.on("participant_connected", on_participant_connected)
+    # Check if participant already in room
+    for p in ctx.room.remote_participants.values():
+        on_participant_connected(p)
+        break
 
+    # If not yet joined, wait up to 15 seconds
+    if not participant_joined.is_set():
+        ctx.room.on("participant_connected", on_participant_connected)
+        try:
+            await asyncio.wait_for(participant_joined.wait(), timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ Timed out waiting for participant — using defaults")
+
+    logger.info(f"🎯 Starting agent | topic: {topic} | lang: {native_lang}")
+
+    # ── Session with Google TTS ───────────────────────────────────────────────
     session = AgentSession(
         stt=deepgram.STT(model="nova-2", language="en"),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=deepgram.TTS(model="aura-2-thalia-en"),
+        tts=get_google_tts(native_lang),   # ← Google TTS
         vad=ctx.proc.userdata["vad"],
     )
 
@@ -175,7 +190,6 @@ async def entrypoint(ctx: JobContext):
                 transcript.append(entry)
                 logger.info(f"{'User' if role == 'user' else 'Julian'}: {text}")
 
-                # Save user utterances to DB in real-time
                 if role == "user" and user_id:
                     asyncio.create_task(_save_utterance(user_id, ctx.room.name, entry))
         except Exception as e:
