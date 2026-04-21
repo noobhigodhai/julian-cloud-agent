@@ -41,14 +41,13 @@ LANGUAGE_NAMES = {
 
 def get_google_tts(native_lang: str | None):
     """
-    Always use English Neural2 voice for best code-switching quality.
-    Credentials loaded from GOOGLE_CREDENTIALS_JSON env variable.
+    Use Chirp 3 HD voice — required for streaming synthesis in LiveKit.
     """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
     return google.TTS(
-        voice_name="en-US-Neural2-F",
+        voice_name="en-US-Chirp3-HD-Aoede",
         language="en-US",
         gender="female",
         credentials_info=creds,
@@ -139,7 +138,7 @@ async def entrypoint(ctx: JobContext):
     topic                = None
     native_lang          = None
 
-    # ── Wait for participant so we have metadata BEFORE starting agent ────────
+    # ── Register listener BEFORE connecting so we never miss the event ────────
     participant_joined = asyncio.Event()
 
     def on_participant_connected(participant):
@@ -156,14 +155,18 @@ async def entrypoint(ctx: JobContext):
             logger.error(f"Metadata parse error: {e}")
         participant_joined.set()
 
-    # Check if participant already in room
+    ctx.room.on("participant_connected", on_participant_connected)
+
+    # ── Connect to room ───────────────────────────────────────────────────────
+    await ctx.connect()
+
+    # ── Check if participant already in room after connecting ─────────────────
     for p in ctx.room.remote_participants.values():
         on_participant_connected(p)
         break
 
-    # If not yet joined, wait up to 15 seconds
+    # ── Wait up to 15 seconds for participant if not already joined ───────────
     if not participant_joined.is_set():
-        ctx.room.on("participant_connected", on_participant_connected)
         try:
             await asyncio.wait_for(participant_joined.wait(), timeout=15.0)
         except asyncio.TimeoutError:
@@ -171,7 +174,7 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"🎯 Starting agent | topic: {topic} | lang: {native_lang}")
 
-    # ── Session ───────────────────────────────────────────────────────────────
+    # ── Session with Google Chirp 3 HD TTS ────────────────────────────────────
     session = AgentSession(
         stt=deepgram.STT(model="nova-2", language="en"),
         llm=openai.LLM(model="gpt-4o-mini"),
