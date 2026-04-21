@@ -11,17 +11,99 @@ from livekit.plugins import openai, deepgram
 logger = logging.getLogger("julian-cloud-agent")
 BACKEND_URL = os.environ.get("BACKEND_URL", "https://specker.ai")
 
+# Map of native language codes to language names for the prompt
+LANGUAGE_NAMES = {
+    "tl":  "Filipino/Tagalog",
+    "hi":  "Hindi",
+    "bn":  "Bengali",
+    "ta":  "Tamil",
+    "te":  "Telugu",
+    "mr":  "Marathi",
+    "gu":  "Gujarati",
+    "kn":  "Kannada",
+    "ml":  "Malayalam",
+    "pa":  "Punjabi",
+    "ur":  "Urdu",
+    "id":  "Indonesian/Bahasa",
+    "ms":  "Malay",
+    "vi":  "Vietnamese",
+    "th":  "Thai",
+    "ar":  "Arabic",
+    "es":  "Spanish",
+    "pt":  "Portuguese",
+    "fr":  "French",
+    "de":  "German",
+    "zh":  "Mandarin Chinese",
+    "ja":  "Japanese",
+    "ko":  "Korean",
+    "sw":  "Swahili",
+    "en":  "English",
+}
+
+def build_instructions(topic: str | None, native_lang_code: str | None) -> str:
+    lang_name = LANGUAGE_NAMES.get(native_lang_code or "", None)
+
+    topic_line = (
+        f"Today's conversation topic is: **{topic}**. "
+        f"Start the conversation around this topic naturally."
+        if topic else
+        "You can talk about anything — ask what's on the user's mind."
+    )
+
+    if lang_name and lang_name != "English":
+        lang_line = f"""
+You MUST speak in a natural mix of {lang_name} and English — this is called code-switching.
+Rules:
+- Use simple {lang_name} words and phrases naturally woven into English sentences.
+- Greet in {lang_name} first, then switch to mixed speech.
+- Use English for explanations, feedback, and corrections.
+- Use {lang_name} for greetings, encouragement, filler phrases, and emotional warmth.
+- Example style (Filipino): "Kamusta ka? So how was your day today? Okay lang ba?"
+- Example style (Hindi): "Arre yaar, that was really good! Aur bolo, kya chal raha hai?"
+- Keep it natural — don't translate every word, just mix freely like a bilingual friend.
+- NEVER speak 100% in {lang_name} — always keep English as the base.
+"""
+    else:
+        lang_line = "Speak naturally in English only."
+
+    return f"""You are Julian, a warm and empathetic AI English coach on a phone call.
+Keep responses short — 1 to 2 sentences. Be warm, friendly, and encouraging.
+Ask follow-up questions to keep the conversation going.
+
+{topic_line}
+
+{lang_line}
+
+Your goal is to help the user practice English confidently. Gently correct mistakes by 
+repeating what they said correctly in your response, without being preachy about it."""
+
+
 class JulianAgent(Agent):
-    def __init__(self):
-        super().__init__(instructions="""You are Julian, a warm and empathetic AI friend on a phone call.
-Keep responses short — 1 to 2 sentences. Be warm and natural. English only.
-Ask follow-up questions to keep the conversation going.""")
+    def __init__(self, topic: str | None = None, native_lang: str | None = None):
+        self._topic       = topic
+        self._native_lang = native_lang
+        super().__init__(instructions=build_instructions(topic, native_lang))
 
     async def on_enter(self):
+        lang_name = LANGUAGE_NAMES.get(self._native_lang or "", None)
+
+        if lang_name and lang_name != "English":
+            greeting = (
+                f"Greet the user warmly in {lang_name} first (one short phrase), "
+                f"then switch to a mix of {lang_name} and English. "
+                f"Ask how they are doing today."
+            )
+        else:
+            greeting = "Greet the user warmly in English and ask how they are doing today."
+
+        if self._topic:
+            greeting += f" Then naturally bring up today's topic: {self._topic}."
+
         await self.session.generate_reply(
-            instructions="Greet the user warmly and ask how they are doing today.",
+            instructions=greeting,
             allow_interruptions=True,
         )
+
 
 server = AgentServer()
 
@@ -34,30 +116,38 @@ server.setup_fnc = prewarm
 async def entrypoint(ctx: JobContext):
     transcript = []
     start_time = datetime.utcnow()
+
+    # ── Read participant metadata ─────────────────────────────────────────────
     participant_identity = None
-    user_email = None
-    user_id = None
+    user_email           = None
+    user_id              = None
+    topic                = None
+    native_lang          = None
 
     for p in ctx.room.remote_participants.values():
         participant_identity = p.identity
         try:
-            meta = json.loads(p.metadata or "{}")
-            user_email = meta.get("email")
-            user_id = meta.get("userId")
-            logger.info(f"Participant: {participant_identity} | userId: {user_id}")
+            meta        = json.loads(p.metadata or "{}")
+            user_email  = meta.get("email")
+            user_id     = meta.get("userId")
+            topic       = meta.get("topic")        # e.g. "travel"
+            native_lang = meta.get("nativeLang")   # e.g. "tl", "hi"
+            logger.info(f"Participant: {participant_identity} | userId: {user_id} | topic: {topic} | lang: {native_lang}")
         except Exception as e:
             logger.error(f"Metadata parse error: {e}")
         break
 
     def on_participant_connected(participant):
-        nonlocal participant_identity, user_email, user_id
+        nonlocal participant_identity, user_email, user_id, topic, native_lang
         if participant_identity is None:
             participant_identity = participant.identity
             try:
-                meta = json.loads(participant.metadata or "{}")
-                user_email = meta.get("email")
-                user_id = meta.get("userId")
-                logger.info(f"Participant joined: {participant_identity} | userId: {user_id}")
+                meta        = json.loads(participant.metadata or "{}")
+                user_email  = meta.get("email")
+                user_id     = meta.get("userId")
+                topic       = meta.get("topic")
+                native_lang = meta.get("nativeLang")
+                logger.info(f"Participant joined: {participant_identity} | userId: {user_id} | topic: {topic} | lang: {native_lang}")
             except Exception as e:
                 logger.error(f"Metadata parse error on join: {e}")
 
@@ -103,28 +193,14 @@ async def entrypoint(ctx: JobContext):
             logger.warning(f"Live transcript save failed: {e}")
 
     async def on_shutdown():
-        logger.info(f"Shutdown callback | Lines: {len(transcript)}")
+        logger.info(f"Shutdown | Lines: {len(transcript)}")
         if not transcript:
             logger.warning("No transcript — skipping")
             return
 
         duration = int((datetime.utcnow() - start_time).total_seconds())
-        logger.info(f"Sending transcript | duration: {duration}s | lines: {len(transcript)}")
+        logger.info(f"Sending | duration: {duration}s | lines: {len(transcript)} | topic: {topic} | lang: {native_lang}")
 
-        # Step 1: Send transcript to app via LiveKit data channel (instant)
-        try:
-            data = json.dumps({
-                "type":       "transcript",
-                "transcript": transcript,
-                "duration":   duration,
-            }).encode()
-            await ctx.room.local_participant.publish_data(data, reliable=True)
-            logger.info("✅ Transcript sent via data channel to app")
-            await asyncio.sleep(1)
-        except Exception as e:
-            logger.error(f"Data channel error: {e}")
-
-        # Step 2: Send full transcript to server for MongoDB + Hume analysis
         payload = {
             "roomName":            ctx.room.name,
             "participantIdentity": participant_identity,
@@ -132,6 +208,8 @@ async def entrypoint(ctx: JobContext):
             "userId":              user_id,
             "duration":            duration,
             "transcript":          transcript,
+            "topic":               topic,
+            "nativeLang":          native_lang,
             "timestamp":           datetime.utcnow().isoformat(),
         }
         try:
@@ -141,14 +219,14 @@ async def entrypoint(ctx: JobContext):
                     json=payload,
                     headers={"Content-Type": "application/json"},
                 )
-                logger.info(f"✅ Transcript sent to server: {res.status_code}")
+                logger.info(f"✅ Sent to server: {res.status_code}")
         except Exception as e:
-            logger.error(f"Failed to send to server: {e}")
+            logger.error(f"Failed to send: {e}")
 
     ctx.add_shutdown_callback(on_shutdown)
 
     await session.start(
-        agent=JulianAgent(),
+        agent=JulianAgent(topic=topic, native_lang=native_lang),
         room=ctx.room,
     )
 
