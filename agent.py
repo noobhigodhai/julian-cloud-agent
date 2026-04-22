@@ -41,39 +41,40 @@ LANGUAGE_NAMES = {
 
 def get_google_tts(native_lang: str | None):
     """
-    Native language voices — each language gets its own accent/voice.
-    Falls back to en-US-Neural2-C if a voice fails.
+    Chirp3-HD voices with native language codes.
+    Only Chirp3-HD supports streaming synthesis in LiveKit.
+    Native language code (hi-IN, ta-IN etc.) gives the correct accent.
     """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
     voice_map = {
-        "hi": ("hi-IN-Neural2-A",  "hi-IN"),   # Hindi ✅
-        "tl": ("fil-ph-Neural2-A", "fil-PH"),  # Filipino ✅
-        "ta": ("ta-IN-Wavenet-A",  "ta-IN"),   # Tamil ✅
-        "te": ("te-IN-Standard-A", "te-IN"),   # Telugu ✅
-        "bn": ("bn-IN-Wavenet-A",  "bn-IN"),   # Bengali ✅
-        "mr": ("mr-IN-Wavenet-A",  "mr-IN"),   # Marathi ✅
-        "gu": ("gu-IN-Wavenet-A",  "gu-IN"),   # Gujarati ✅
-        "kn": ("kn-IN-Wavenet-A",  "kn-IN"),   # Kannada ✅
-        "ml": ("ml-IN-Wavenet-A",  "ml-IN"),   # Malayalam ✅
-        "pa": ("pa-IN-Wavenet-A",  "pa-IN"),   # Punjabi ✅
-        "ur": ("ur-IN-Wavenet-A",  "ur-IN"),   # Urdu ✅
-        "id": ("id-ID-Wavenet-A",  "id-ID"),   # Indonesian ✅
-        "ms": ("ms-MY-Wavenet-A",  "ms-MY"),   # Malay ✅
-        "ko": ("ko-KR-Neural2-A",  "ko-KR"),   # Korean ✅
-        "ja": ("ja-JP-Neural2-B",  "ja-JP"),   # Japanese ✅
-        "ar": ("ar-XA-Wavenet-A",  "ar-XA"),   # Arabic ✅
-        "es": ("es-ES-Neural2-A",  "es-ES"),   # Spanish ✅
-        "fr": ("fr-FR-Neural2-F",  "fr-FR"),   # French ✅
-        "de": ("de-DE-Wavenet-G",  "de-DE"),   # German ✅
-        "pt": ("pt-BR-Neural2-A",  "pt-BR"),   # Portuguese ✅
-        "zh": ("cmn-CN-Wavenet-A", "cmn-CN"),  # Mandarin ✅
-        "vi": ("vi-VN-Neural2-A",  "vi-VN"),   # Vietnamese ✅
-        "en": ("en-US-Neural2-C",  "en-US"),   # English only
+        "hi": ("hi-IN-Chirp3-HD-Aoede",  "hi-IN"),   # Hindi ✅
+        "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),  # Filipino ✅
+        "ta": ("ta-IN-Chirp3-HD-Aoede",  "ta-IN"),   # Tamil ✅
+        "te": ("te-IN-Chirp3-HD-Aoede",  "te-IN"),   # Telugu ✅
+        "bn": ("bn-IN-Chirp3-HD-Aoede",  "bn-IN"),   # Bengali ✅
+        "mr": ("mr-IN-Chirp3-HD-Aoede",  "mr-IN"),   # Marathi ✅
+        "gu": ("gu-IN-Chirp3-HD-Aoede",  "gu-IN"),   # Gujarati ✅
+        "kn": ("kn-IN-Chirp3-HD-Aoede",  "kn-IN"),   # Kannada ✅
+        "ml": ("ml-IN-Chirp3-HD-Aoede",  "ml-IN"),   # Malayalam ✅
+        "pa": ("pa-IN-Chirp3-HD-Aoede",  "pa-IN"),   # Punjabi ✅
+        "ur": ("ur-IN-Chirp3-HD-Aoede",  "ur-IN"),   # Urdu ✅
+        "id": ("id-ID-Chirp3-HD-Aoede",  "id-ID"),   # Indonesian ✅
+        "ms": ("ms-MY-Chirp3-HD-Aoede",  "ms-MY"),   # Malay ✅
+        "ko": ("ko-KR-Chirp3-HD-Aoede",  "ko-KR"),   # Korean ✅
+        "ja": ("ja-JP-Chirp3-HD-Aoede",  "ja-JP"),   # Japanese ✅
+        "ar": ("ar-XA-Chirp3-HD-Aoede",  "ar-XA"),   # Arabic ✅
+        "es": ("es-ES-Chirp3-HD-Aoede",  "es-ES"),   # Spanish ✅
+        "fr": ("fr-FR-Chirp3-HD-Aoede",  "fr-FR"),   # French ✅
+        "de": ("de-DE-Chirp3-HD-Aoede",  "de-DE"),   # German ✅
+        "pt": ("pt-BR-Chirp3-HD-Aoede",  "pt-BR"),   # Portuguese ✅
+        "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),  # Mandarin ✅
+        "vi": ("vi-VN-Chirp3-HD-Aoede",  "vi-VN"),   # Vietnamese ✅
+        "en": ("en-US-Chirp3-HD-Aoede",  "en-US"),   # English only
     }
 
-    voice_name, language = voice_map.get(native_lang or "", ("en-US-Neural2-C", "en-US"))
+    voice_name, language = voice_map.get(native_lang or "", ("en-US-Chirp3-HD-Aoede", "en-US"))
     logger.info(f"🎙️ TTS voice: {voice_name} | language: {language}")
 
     try:
@@ -86,7 +87,7 @@ def get_google_tts(native_lang: str | None):
     except Exception as e:
         logger.warning(f"⚠️ Voice {voice_name} failed ({e}) — fallback to en-US")
         return google.TTS(
-            voice_name="en-US-Neural2-C",
+            voice_name="en-US-Chirp3-HD-Aoede",
             language="en-US",
             gender="female",
             credentials_info=creds,
@@ -178,7 +179,7 @@ async def entrypoint(ctx: JobContext):
     topic                = None
     native_lang          = None
 
-    # ── Register listener BEFORE connecting so we never miss the event ────────
+    # ── Register listener BEFORE connecting ───────────────────────────────────
     participant_joined = asyncio.Event()
 
     def on_participant_connected(participant):
@@ -200,7 +201,7 @@ async def entrypoint(ctx: JobContext):
     # ── Connect to room ───────────────────────────────────────────────────────
     await ctx.connect()
 
-    # ── Check if participant already in room after connecting ─────────────────
+    # ── Check if participant already in room ──────────────────────────────────
     for p in ctx.room.remote_participants.values():
         on_participant_connected(p)
         break
