@@ -40,10 +40,6 @@ LANGUAGE_NAMES = {
 }
 
 def get_google_stt(native_lang: str | None):
-    """
-    Google STT with native language + English.
-    languages=[native, en-US] allows code-switching between both.
-    """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
@@ -76,14 +72,12 @@ def get_google_stt(native_lang: str | None):
     lang_code = lang_map.get(native_lang or "", "en-US")
     logger.info(f"🎤 STT: Google | language={lang_code}")
 
-    # For English only — single language
     if lang_code == "en-US":
         return google.STT(
             languages=["en-US"],
             credentials_info=creds,
         )
 
-    # For native — listen to both native + English (code-switching)
     return google.STT(
         languages=[lang_code, "en-US"],
         credentials_info=creds,
@@ -91,10 +85,6 @@ def get_google_stt(native_lang: str | None):
 
 
 def get_google_tts(native_lang: str | None):
-    """
-    Chirp3-HD voices with native language codes.
-    Only Chirp3-HD supports streaming synthesis in LiveKit.
-    """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
@@ -149,39 +139,60 @@ def build_instructions(topic: str | None, native_lang_code: str | None) -> str:
 
     topic_line = (
         f"Today's conversation topic is: **{topic}**. "
-        f"Start the conversation around this topic naturally."
+        f"Keep the conversation around this topic."
         if topic else
         "You can talk about anything — ask what's on the user's mind."
     )
 
     if lang_name and lang_name != "English":
         lang_line = f"""
-You MUST speak in a natural mix of {lang_name} and English — this is called code-switching.
-Rules:
-- Use simple {lang_name} words and phrases naturally woven into English sentences.
-- Greet in {lang_name} first, then switch to mixed speech.
-- Use English for explanations, feedback, and corrections.
-- Use {lang_name} for greetings, encouragement, filler phrases, and emotional warmth.
-- Example style (Filipino): "Kamusta ka? So how was your day today? Okay lang ba?"
-- Example style (Hindi): "Arre yaar, that was really good! Aur bolo, kya chal raha hai?"
-- Keep it natural — don't translate every word, just mix freely like a bilingual friend.
-- NEVER speak 100% in {lang_name} — always keep English as the base.
-- The user may speak in {lang_name}, English, or a mix — understand and respond to all of it.
-- IMPORTANT: Write ONLY the words to be spoken. No stage directions, no brackets, no labels.
+You are an English coach. The user speaks {lang_name} and is learning English.
+
+YOUR ROLE:
+- You are a fun, warm, encouraging English coach on a phone call.
+- Your job is to help the user PRACTICE speaking English.
+- You mostly speak in English. Use {lang_name} only for tiny warm words like "yaar", "arre", "acha", "sahi hai", "Kamusta" — never full {lang_name} sentences.
+
+WHEN USER SPEAKS IN {lang_name}:
+Step 1 — Acknowledge warmly in English what they said. Example: "Oh, you said you're doing well!"
+Step 2 — Teach them the English version naturally. Example: "In English, you can say: I am doing great!"
+Step 3 — Ask them to try saying it in English. Example: "Now you try — say it in English for me!"
+Step 4 — Wait for them to try. When they do, encourage them and continue the conversation.
+
+EXAMPLES:
+User: "main theek hoon"
+You: "Oh nice! So you're doing well. In English you'd say: I am doing fine. Can you try saying that?"
+
+User: "mujhe travel bahut pasand hai"
+You: "Acha! You love travelling! In English that's: I love to travel. Go ahead, say it!"
+
+User: "I love to travel"
+You: "Yes! Perfect yaar! So where would you love to travel to?"
+
+WHEN USER SPEAKS IN ENGLISH:
+- Celebrate their effort warmly.
+- Gently correct any mistakes by naturally using the correct version in your reply.
+- Ask a follow-up question to keep them talking in English.
+
+RULES:
+- Keep each response SHORT — 2 to 3 sentences max.
+- Always end with either a retry request OR a follow-up question.
+- Never lecture. Keep it fun and encouraging like a friend.
+- ONLY speak the words. No stage directions, no brackets, no labels.
 """
     else:
-        lang_line = "Speak naturally in English only."
+        lang_line = """
+Speak naturally in English only.
+Gently correct any mistakes by naturally using the correct version in your reply.
+Keep responses short — 1 to 2 sentences. Always ask a follow-up question.
+"""
 
     return f"""You are Julian, a warm and empathetic AI English coach on a phone call.
-Keep responses short — 1 to 2 sentences. Be warm, friendly, and encouraging.
-Ask follow-up questions to keep the conversation going.
+Be friendly, encouraging, and fun — like a supportive bilingual friend.
 
 {topic_line}
 
-{lang_line}
-
-Your goal is to help the user practice English confidently. Gently correct mistakes by
-repeating what they said correctly in your response, without being preachy about it."""
+{lang_line}"""
 
 
 class JulianAgent(Agent):
@@ -195,16 +206,21 @@ class JulianAgent(Agent):
 
         if lang_name and lang_name != "English":
             greeting = (
-                f"Greet the user warmly in {lang_name} first (one short phrase), "
-                f"then switch to a mix of {lang_name} and English. "
-                f"Ask how they are doing today. "
-                f"Speak ONLY the words — no labels, no brackets, no stage directions."
+                f"Greet the user with ONE short warm {lang_name} phrase only "
+                f"(like Namaste / Kamusta / Hola), then immediately switch to English. "
+                f"In English, tell them today you'll practice speaking English together"
+                f"{f' about {self._topic}' if self._topic else ''}. "
+                f"Ask them in English: how are you doing today? "
+                f"Keep it to 2 sentences max. "
+                f"Speak ONLY the words — no labels, no brackets."
             )
         else:
-            greeting = "Greet the user warmly in English and ask how they are doing today."
-
-        if self._topic:
-            greeting += f" Then naturally bring up today's topic: {self._topic}."
+            greeting = (
+                f"Greet the user warmly in English. "
+                f"Tell them today you'll practice English together"
+                f"{f' about {self._topic}' if self._topic else ''}. "
+                f"Ask how they are doing today."
+            )
 
         await self.session.generate_reply(
             instructions=greeting,
@@ -230,7 +246,6 @@ async def entrypoint(ctx: JobContext):
     topic                = None
     native_lang          = None
 
-    # ── Register listener BEFORE connecting ───────────────────────────────────
     participant_joined = asyncio.Event()
 
     def on_participant_connected(participant):
@@ -249,15 +264,12 @@ async def entrypoint(ctx: JobContext):
 
     ctx.room.on("participant_connected", on_participant_connected)
 
-    # ── Connect to room ───────────────────────────────────────────────────────
     await ctx.connect()
 
-    # ── Check if participant already in room ──────────────────────────────────
     for p in ctx.room.remote_participants.values():
         on_participant_connected(p)
         break
 
-    # ── Wait up to 15 seconds for participant ─────────────────────────────────
     if not participant_joined.is_set():
         try:
             await asyncio.wait_for(participant_joined.wait(), timeout=15.0)
@@ -266,7 +278,6 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"🎯 Starting agent | topic: {topic} | lang: {native_lang}")
 
-    # ── Session — fully Google (STT + TTS) ────────────────────────────────────
     session = AgentSession(
         stt=get_google_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
