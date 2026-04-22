@@ -41,7 +41,8 @@ LANGUAGE_NAMES = {
 
 def get_google_stt(native_lang: str | None):
     """
-    Google STT — supports native language + English code-switching.
+    Google STT with native language + English.
+    languages=[native, en-US] allows code-switching between both.
     """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
@@ -75,8 +76,16 @@ def get_google_stt(native_lang: str | None):
     lang_code = lang_map.get(native_lang or "", "en-US")
     logger.info(f"🎤 STT: Google | language={lang_code}")
 
+    # For English only — single language
+    if lang_code == "en-US":
+        return google.STT(
+            languages=["en-US"],
+            credentials_info=creds,
+        )
+
+    # For native — listen to both native + English (code-switching)
     return google.STT(
-        language=lang_code,
+        languages=[lang_code, "en-US"],
         credentials_info=creds,
     )
 
@@ -257,11 +266,11 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"🎯 Starting agent | topic: {topic} | lang: {native_lang}")
 
-    # ── Session — fully Google (STT + TTS) ───────────────────────────────────
+    # ── Session — fully Google (STT + TTS) ────────────────────────────────────
     session = AgentSession(
-        stt=get_google_stt(native_lang),     # ← Google STT
+        stt=get_google_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_google_tts(native_lang),     # ← Google TTS
+        tts=get_google_tts(native_lang),
         vad=ctx.proc.userdata["vad"],
     )
 
