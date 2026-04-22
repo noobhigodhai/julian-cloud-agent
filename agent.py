@@ -40,51 +40,54 @@ LANGUAGE_NAMES = {
 }
 
 def get_google_stt(native_lang: str | None):
+    """
+    Single language STT per user based on their native language.
+    Single language avoids Google defaulting to English when multiple are passed.
+    Native language STT handles English words fine due to code-switching support.
+    """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
     lang_map = {
-        "hi": "hi-IN",
-        "tl": "fil-PH",
-        "ta": "ta-IN",
-        "te": "te-IN",
-        "bn": "bn-IN",
-        "mr": "mr-IN",
-        "gu": "gu-IN",
-        "kn": "kn-IN",
-        "ml": "ml-IN",
-        "pa": "pa-IN",
-        "ur": "ur-IN",
-        "id": "id-ID",
-        "ms": "ms-MY",
-        "ko": "ko-KR",
-        "ja": "ja-JP",
-        "ar": "ar-XA",
-        "es": "es-ES",
-        "fr": "fr-FR",
-        "de": "de-DE",
-        "pt": "pt-BR",
-        "zh": "cmn-Hans-CN",
-        "vi": "vi-VN",
-        "en": "en-US",
+        "hi": "hi-IN",     # Hindi
+        "tl": "fil-PH",    # Filipino
+        "ta": "ta-IN",     # Tamil
+        "te": "te-IN",     # Telugu
+        "bn": "bn-IN",     # Bengali
+        "mr": "mr-IN",     # Marathi
+        "gu": "gu-IN",     # Gujarati
+        "kn": "kn-IN",     # Kannada
+        "ml": "ml-IN",     # Malayalam
+        "pa": "pa-IN",     # Punjabi
+        "ur": "ur-IN",     # Urdu
+        "id": "id-ID",     # Indonesian
+        "ms": "ms-MY",     # Malay
+        "ko": "ko-KR",     # Korean
+        "ja": "ja-JP",     # Japanese
+        "ar": "ar-XA",     # Arabic
+        "es": "es-ES",     # Spanish
+        "fr": "fr-FR",     # French
+        "de": "de-DE",     # German
+        "pt": "pt-BR",     # Portuguese
+        "zh": "cmn-Hans-CN", # Mandarin
+        "vi": "vi-VN",     # Vietnamese
+        "en": "en-US",     # English
     }
 
     lang_code = lang_map.get(native_lang or "", "en-US")
     logger.info(f"🎤 STT: Google | language={lang_code}")
 
-    if lang_code == "en-US":
-        return google.STT(
-            languages=["en-US"],
-            credentials_info=creds,
-        )
-
     return google.STT(
-        languages=[lang_code, "en-US"],
+        languages=[lang_code],
         credentials_info=creds,
     )
 
 
 def get_google_tts(native_lang: str | None):
+    """
+    Chirp3-HD voices with native language codes.
+    Only Chirp3-HD supports streaming synthesis in LiveKit.
+    """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
@@ -138,8 +141,7 @@ def build_instructions(topic: str | None, native_lang_code: str | None) -> str:
     lang_name = LANGUAGE_NAMES.get(native_lang_code or "", None)
 
     topic_line = (
-        f"Today's conversation topic is: **{topic}**. "
-        f"Keep the conversation around this topic."
+        f"Today's conversation topic is: **{topic}**. Keep the conversation around this topic."
         if topic else
         "You can talk about anything — ask what's on the user's mind."
     )
@@ -151,23 +153,27 @@ You are an English coach. The user speaks {lang_name} and is learning English.
 YOUR ROLE:
 - You are a fun, warm, encouraging English coach on a phone call.
 - Your job is to help the user PRACTICE speaking English.
-- You mostly speak in English. Use {lang_name} only for tiny warm words like "yaar", "arre", "acha", "sahi hai", "Kamusta" — never full {lang_name} sentences.
+- You speak in English always. Use {lang_name} only for tiny warm filler words like 
+  "yaar", "arre", "acha", "sahi hai", "Kamusta" — never full {lang_name} sentences.
 
 WHEN USER SPEAKS IN {lang_name}:
-Step 1 — Acknowledge warmly in English what they said. Example: "Oh, you said you're doing well!"
-Step 2 — Teach them the English version naturally. Example: "In English, you can say: I am doing great!"
-Step 3 — Ask them to try saying it in English. Example: "Now you try — say it in English for me!"
-Step 4 — Wait for them to try. When they do, encourage them and continue the conversation.
+- Step 1: Acknowledge warmly what they said in English.
+- Step 2: Teach them how to say it in English naturally.
+- Step 3: Ask them to retry and say it in English.
+- Step 4: Wait for them to try. When they do, praise them and continue.
 
 EXAMPLES:
 User: "main theek hoon"
-You: "Oh nice! So you're doing well. In English you'd say: I am doing fine. Can you try saying that?"
+You: "Oh nice, so you're doing well! In English you'd say: I am doing fine. Now you try saying that!"
 
 User: "mujhe travel bahut pasand hai"
-You: "Acha! You love travelling! In English that's: I love to travel. Go ahead, say it!"
+You: "Acha! You love travelling! In English say: I love to travel. Go ahead, give it a try!"
 
 User: "I love to travel"
 You: "Yes! Perfect yaar! So where would you love to travel to?"
+
+User: "kamusta ka"
+You: "Oh you asked how I am! In English that's: How are you? Now you try saying it!"
 
 WHEN USER SPEAKS IN ENGLISH:
 - Celebrate their effort warmly.
@@ -175,8 +181,8 @@ WHEN USER SPEAKS IN ENGLISH:
 - Ask a follow-up question to keep them talking in English.
 
 RULES:
-- Keep each response SHORT — 2 to 3 sentences max.
-- Always end with either a retry request OR a follow-up question.
+- Keep each response to 2 to 3 sentences max.
+- Always end with either a retry request OR a follow-up question in English.
 - Never lecture. Keep it fun and encouraging like a friend.
 - ONLY speak the words. No stage directions, no brackets, no labels.
 """
