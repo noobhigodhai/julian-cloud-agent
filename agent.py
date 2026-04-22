@@ -39,6 +39,25 @@ LANGUAGE_NAMES = {
     "en":  "English",
 }
 
+def get_deepgram_stt(native_lang: str | None):
+    """
+    Multi-language STT — detects both English and native language.
+    detect_language=True lets Nova-2 auto-detect code-switching mid-sentence.
+    """
+    if native_lang and native_lang != "en":
+        logger.info(f"🎤 STT: multi-language detection enabled (primary: {native_lang} + en)")
+        return deepgram.STT(
+            model="nova-2",
+            detect_language=True,
+        )
+    else:
+        logger.info("🎤 STT: English only")
+        return deepgram.STT(
+            model="nova-2",
+            language="en",
+        )
+
+
 def get_google_tts(native_lang: str | None):
     """
     Chirp3-HD voices with native language codes.
@@ -49,29 +68,29 @@ def get_google_tts(native_lang: str | None):
     creds = json.loads(creds_json) if creds_json else None
 
     voice_map = {
-        "hi": ("hi-IN-Chirp3-HD-Aoede",  "hi-IN"),   # Hindi ✅
-        "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),  # Filipino ✅
-        "ta": ("ta-IN-Chirp3-HD-Aoede",  "ta-IN"),   # Tamil ✅
-        "te": ("te-IN-Chirp3-HD-Aoede",  "te-IN"),   # Telugu ✅
-        "bn": ("bn-IN-Chirp3-HD-Aoede",  "bn-IN"),   # Bengali ✅
-        "mr": ("mr-IN-Chirp3-HD-Aoede",  "mr-IN"),   # Marathi ✅
-        "gu": ("gu-IN-Chirp3-HD-Aoede",  "gu-IN"),   # Gujarati ✅
-        "kn": ("kn-IN-Chirp3-HD-Aoede",  "kn-IN"),   # Kannada ✅
-        "ml": ("ml-IN-Chirp3-HD-Aoede",  "ml-IN"),   # Malayalam ✅
-        "pa": ("pa-IN-Chirp3-HD-Aoede",  "pa-IN"),   # Punjabi ✅
-        "ur": ("ur-IN-Chirp3-HD-Aoede",  "ur-IN"),   # Urdu ✅
-        "id": ("id-ID-Chirp3-HD-Aoede",  "id-ID"),   # Indonesian ✅
-        "ms": ("ms-MY-Chirp3-HD-Aoede",  "ms-MY"),   # Malay ✅
-        "ko": ("ko-KR-Chirp3-HD-Aoede",  "ko-KR"),   # Korean ✅
-        "ja": ("ja-JP-Chirp3-HD-Aoede",  "ja-JP"),   # Japanese ✅
-        "ar": ("ar-XA-Chirp3-HD-Aoede",  "ar-XA"),   # Arabic ✅
-        "es": ("es-ES-Chirp3-HD-Aoede",  "es-ES"),   # Spanish ✅
-        "fr": ("fr-FR-Chirp3-HD-Aoede",  "fr-FR"),   # French ✅
-        "de": ("de-DE-Chirp3-HD-Aoede",  "de-DE"),   # German ✅
-        "pt": ("pt-BR-Chirp3-HD-Aoede",  "pt-BR"),   # Portuguese ✅
-        "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),  # Mandarin ✅
-        "vi": ("vi-VN-Chirp3-HD-Aoede",  "vi-VN"),   # Vietnamese ✅
-        "en": ("en-US-Chirp3-HD-Aoede",  "en-US"),   # English only
+        "hi": ("hi-IN-Chirp3-HD-Aoede",  "hi-IN"),
+        "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),
+        "ta": ("ta-IN-Chirp3-HD-Aoede",  "ta-IN"),
+        "te": ("te-IN-Chirp3-HD-Aoede",  "te-IN"),
+        "bn": ("bn-IN-Chirp3-HD-Aoede",  "bn-IN"),
+        "mr": ("mr-IN-Chirp3-HD-Aoede",  "mr-IN"),
+        "gu": ("gu-IN-Chirp3-HD-Aoede",  "gu-IN"),
+        "kn": ("kn-IN-Chirp3-HD-Aoede",  "kn-IN"),
+        "ml": ("ml-IN-Chirp3-HD-Aoede",  "ml-IN"),
+        "pa": ("pa-IN-Chirp3-HD-Aoede",  "pa-IN"),
+        "ur": ("ur-IN-Chirp3-HD-Aoede",  "ur-IN"),
+        "id": ("id-ID-Chirp3-HD-Aoede",  "id-ID"),
+        "ms": ("ms-MY-Chirp3-HD-Aoede",  "ms-MY"),
+        "ko": ("ko-KR-Chirp3-HD-Aoede",  "ko-KR"),
+        "ja": ("ja-JP-Chirp3-HD-Aoede",  "ja-JP"),
+        "ar": ("ar-XA-Chirp3-HD-Aoede",  "ar-XA"),
+        "es": ("es-ES-Chirp3-HD-Aoede",  "es-ES"),
+        "fr": ("fr-FR-Chirp3-HD-Aoede",  "fr-FR"),
+        "de": ("de-DE-Chirp3-HD-Aoede",  "de-DE"),
+        "pt": ("pt-BR-Chirp3-HD-Aoede",  "pt-BR"),
+        "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),
+        "vi": ("vi-VN-Chirp3-HD-Aoede",  "vi-VN"),
+        "en": ("en-US-Chirp3-HD-Aoede",  "en-US"),
     }
 
     voice_name, language = voice_map.get(native_lang or "", ("en-US-Chirp3-HD-Aoede", "en-US"))
@@ -116,6 +135,7 @@ Rules:
 - Example style (Hindi): "Arre yaar, that was really good! Aur bolo, kya chal raha hai?"
 - Keep it natural — don't translate every word, just mix freely like a bilingual friend.
 - NEVER speak 100% in {lang_name} — always keep English as the base.
+- The user may speak in {lang_name}, English, or a mix — understand and respond to all of it.
 - IMPORTANT: Write ONLY the words to be spoken. No stage directions, no brackets, no labels.
 """
     else:
@@ -217,9 +237,9 @@ async def entrypoint(ctx: JobContext):
 
     # ── Session ───────────────────────────────────────────────────────────────
     session = AgentSession(
-        stt=deepgram.STT(model="nova-2", language="en"),
+        stt=get_deepgram_stt(native_lang),   # ← multi-language STT
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_google_tts(native_lang),
+        tts=get_google_tts(native_lang),     # ← native accent TTS
         vad=ctx.proc.userdata["vad"],
     )
 
