@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
-from livekit.plugins import openai, deepgram, google
+from livekit.plugins import openai, google
 
 logger = logging.getLogger("julian-cloud-agent")
 BACKEND_URL = os.environ.get("BACKEND_URL", "https://specker.ai")
@@ -39,30 +39,52 @@ LANGUAGE_NAMES = {
     "en":  "English",
 }
 
-def get_deepgram_stt(native_lang: str | None):
+def get_google_stt(native_lang: str | None):
     """
-    Multi-language STT — detects both English and native language.
-    detect_language=True lets Nova-2 auto-detect code-switching mid-sentence.
+    Google STT — supports native language + English code-switching.
     """
-    if native_lang and native_lang != "en":
-        logger.info(f"🎤 STT: multi-language detection enabled (primary: {native_lang} + en)")
-        return deepgram.STT(
-            model="nova-2",
-            detect_language=True,
-        )
-    else:
-        logger.info("🎤 STT: English only")
-        return deepgram.STT(
-            model="nova-2",
-            language="en",
-        )
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+    creds = json.loads(creds_json) if creds_json else None
+
+    lang_map = {
+        "hi": "hi-IN",
+        "tl": "fil-PH",
+        "ta": "ta-IN",
+        "te": "te-IN",
+        "bn": "bn-IN",
+        "mr": "mr-IN",
+        "gu": "gu-IN",
+        "kn": "kn-IN",
+        "ml": "ml-IN",
+        "pa": "pa-IN",
+        "ur": "ur-IN",
+        "id": "id-ID",
+        "ms": "ms-MY",
+        "ko": "ko-KR",
+        "ja": "ja-JP",
+        "ar": "ar-XA",
+        "es": "es-ES",
+        "fr": "fr-FR",
+        "de": "de-DE",
+        "pt": "pt-BR",
+        "zh": "cmn-Hans-CN",
+        "vi": "vi-VN",
+        "en": "en-US",
+    }
+
+    lang_code = lang_map.get(native_lang or "", "en-US")
+    logger.info(f"🎤 STT: Google | language={lang_code}")
+
+    return google.STT(
+        language=lang_code,
+        credentials_info=creds,
+    )
 
 
 def get_google_tts(native_lang: str | None):
     """
     Chirp3-HD voices with native language codes.
     Only Chirp3-HD supports streaming synthesis in LiveKit.
-    Native language code (hi-IN, ta-IN etc.) gives the correct accent.
     """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
@@ -235,11 +257,11 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"🎯 Starting agent | topic: {topic} | lang: {native_lang}")
 
-    # ── Session ───────────────────────────────────────────────────────────────
+    # ── Session — fully Google (STT + TTS) ───────────────────────────────────
     session = AgentSession(
-        stt=get_deepgram_stt(native_lang),   # ← multi-language STT
+        stt=get_google_stt(native_lang),     # ← Google STT
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_google_tts(native_lang),     # ← native accent TTS
+        tts=get_google_tts(native_lang),     # ← Google TTS
         vad=ctx.proc.userdata["vad"],
     )
 
