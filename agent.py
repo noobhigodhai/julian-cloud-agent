@@ -5,7 +5,6 @@ import httpx
 import asyncio
 from datetime import datetime
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
-from livekit.agents.voice import AgentCallContext
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram
 
