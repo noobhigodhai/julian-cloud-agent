@@ -41,17 +41,57 @@ LANGUAGE_NAMES = {
 
 def get_google_tts(native_lang: str | None):
     """
-    Use Chirp 3 HD voice — required for streaming synthesis in LiveKit.
+    Native language voices — each language gets its own accent/voice.
+    Falls back to en-US-Neural2-C if a voice fails.
     """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
-    return google.TTS(
-        voice_name="en-US-Chirp3-HD-Aoede",
-        language="en-US",
-        gender="female",
-        credentials_info=creds,
-    )
+    voice_map = {
+        "hi": ("hi-IN-Neural2-A",  "hi-IN"),   # Hindi ✅
+        "tl": ("fil-ph-Neural2-A", "fil-PH"),  # Filipino ✅
+        "ta": ("ta-IN-Wavenet-A",  "ta-IN"),   # Tamil ✅
+        "te": ("te-IN-Standard-A", "te-IN"),   # Telugu ✅
+        "bn": ("bn-IN-Wavenet-A",  "bn-IN"),   # Bengali ✅
+        "mr": ("mr-IN-Wavenet-A",  "mr-IN"),   # Marathi ✅
+        "gu": ("gu-IN-Wavenet-A",  "gu-IN"),   # Gujarati ✅
+        "kn": ("kn-IN-Wavenet-A",  "kn-IN"),   # Kannada ✅
+        "ml": ("ml-IN-Wavenet-A",  "ml-IN"),   # Malayalam ✅
+        "pa": ("pa-IN-Wavenet-A",  "pa-IN"),   # Punjabi ✅
+        "ur": ("ur-IN-Wavenet-A",  "ur-IN"),   # Urdu ✅
+        "id": ("id-ID-Wavenet-A",  "id-ID"),   # Indonesian ✅
+        "ms": ("ms-MY-Wavenet-A",  "ms-MY"),   # Malay ✅
+        "ko": ("ko-KR-Neural2-A",  "ko-KR"),   # Korean ✅
+        "ja": ("ja-JP-Neural2-B",  "ja-JP"),   # Japanese ✅
+        "ar": ("ar-XA-Wavenet-A",  "ar-XA"),   # Arabic ✅
+        "es": ("es-ES-Neural2-A",  "es-ES"),   # Spanish ✅
+        "fr": ("fr-FR-Neural2-F",  "fr-FR"),   # French ✅
+        "de": ("de-DE-Wavenet-G",  "de-DE"),   # German ✅
+        "pt": ("pt-BR-Neural2-A",  "pt-BR"),   # Portuguese ✅
+        "zh": ("cmn-CN-Wavenet-A", "cmn-CN"),  # Mandarin ✅
+        "vi": ("vi-VN-Neural2-A",  "vi-VN"),   # Vietnamese ✅
+        "en": ("en-US-Neural2-C",  "en-US"),   # English only
+    }
+
+    voice_name, language = voice_map.get(native_lang or "", ("en-US-Neural2-C", "en-US"))
+    logger.info(f"🎙️ TTS voice: {voice_name} | language: {language}")
+
+    try:
+        return google.TTS(
+            voice_name=voice_name,
+            language=language,
+            gender="female",
+            credentials_info=creds,
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ Voice {voice_name} failed ({e}) — fallback to en-US")
+        return google.TTS(
+            voice_name="en-US-Neural2-C",
+            language="en-US",
+            gender="female",
+            credentials_info=creds,
+        )
+
 
 def build_instructions(topic: str | None, native_lang_code: str | None) -> str:
     lang_name = LANGUAGE_NAMES.get(native_lang_code or "", None)
@@ -88,7 +128,7 @@ Ask follow-up questions to keep the conversation going.
 
 {lang_line}
 
-Your goal is to help the user practice English confidently. Gently correct mistakes by 
+Your goal is to help the user practice English confidently. Gently correct mistakes by
 repeating what they said correctly in your response, without being preachy about it."""
 
 
@@ -165,7 +205,7 @@ async def entrypoint(ctx: JobContext):
         on_participant_connected(p)
         break
 
-    # ── Wait up to 15 seconds for participant if not already joined ───────────
+    # ── Wait up to 15 seconds for participant ─────────────────────────────────
     if not participant_joined.is_set():
         try:
             await asyncio.wait_for(participant_joined.wait(), timeout=15.0)
@@ -174,7 +214,7 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"🎯 Starting agent | topic: {topic} | lang: {native_lang}")
 
-    # ── Session with Google Chirp 3 HD TTS ────────────────────────────────────
+    # ── Session ───────────────────────────────────────────────────────────────
     session = AgentSession(
         stt=deepgram.STT(model="nova-2", language="en"),
         llm=openai.LLM(model="gpt-4o-mini"),
