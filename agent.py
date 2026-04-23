@@ -7,7 +7,7 @@ from datetime import datetime
 from openai import AsyncOpenAI
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
-from livekit.plugins import openai, elevenlabs
+from livekit.plugins import openai, deepgram, elevenlabs
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,59 +26,85 @@ logger.info(f"BACKEND_URL    : {BACKEND_URL}")
 logger.info(f"OPENAI_API_KEY : {'set' if OPENAI_API_KEY else 'MISSING'}")
 logger.info(f"ELEVEN_API_KEY : {'set' if ELEVEN_API_KEY else 'MISSING'}")
 
-# ── Voice ID ──────────────────────────────────────────────────────────────────
 VOICE_ID = "Ms9OTvWb99V6DwRHZn6q"
 
+# ── Only languages Deepgram Nova-2 supports ───────────────────────────────────
 LANGUAGE_NAMES = {
-    "tl": "Filipino/Tagalog", "hi": "Hindi",     "bn": "Bengali",
-    "ta": "Tamil",            "te": "Telugu",     "mr": "Marathi",
-    "gu": "Gujarati",         "kn": "Kannada",    "ml": "Malayalam",
-    "pa": "Punjabi",          "ur": "Urdu",       "id": "Indonesian/Bahasa",
-    "ms": "Malay",            "vi": "Vietnamese", "th": "Thai",
-    "ar": "Arabic",           "es": "Spanish",    "pt": "Portuguese",
-    "fr": "French",           "de": "German",     "zh": "Mandarin Chinese",
-    "ja": "Japanese",         "ko": "Korean",     "sw": "Swahili",
+    "hi": "Hindi",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "pt": "Portuguese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ar": "Arabic",
+    "id": "Indonesian/Bahasa",
+    "vi": "Vietnamese",
+    "zh": "Mandarin Chinese",
     "en": "English",
 }
 
+DEEPGRAM_LANG_MAP = {
+    "hi": "hi",
+    "es": "es",
+    "fr": "fr",
+    "de": "de",
+    "pt": "pt",
+    "ja": "ja",
+    "ko": "ko",
+    "ar": "ar",
+    "id": "id",
+    "vi": "vi",
+    "zh": "zh",
+    "en": "en",
+}
+
 ELEVEN_LANG_MAP = {
-    "hi": "hi",  "tl": "fil", "ta": "ta",
-    "te": "te",  "bn": "bn",  "mr": "mr",
-    "gu": "gu",  "kn": "kn",  "ml": "ml",
-    "pa": "pa",  "ur": "ur",  "id": "id",
-    "ms": "ms",  "ko": "ko",  "ja": "ja",
-    "ar": "ar",  "es": "es",  "fr": "fr",
-    "de": "de",  "pt": "pt",  "zh": "zh",
-    "vi": "vi",  "en": "en",
+    "hi": "hi",
+    "es": "es",
+    "fr": "fr",
+    "de": "de",
+    "pt": "pt",
+    "ja": "ja",
+    "ko": "ko",
+    "ar": "ar",
+    "id": "id",
+    "vi": "vi",
+    "zh": "zh",
+    "en": "en",
 }
 
 
-def get_elevenlabs_stt(native_lang: str | None):
+def get_deepgram_stt(native_lang: str | None):
     """
-    ElevenLabs Scribe v2 Realtime STT.
-    90+ languages, no dropout, 150ms latency.
+    Deepgram Nova-2 STT.
+    Stable long sessions, no dropout, supports all languages in our list.
     """
-    lang_code = ELEVEN_LANG_MAP.get(native_lang or "", "en")
-    logger.info(f"🎤 STT: ElevenLabs Scribe v2 Realtime | language={lang_code}")
-    return elevenlabs.STT(
-        model="scribe_v2_realtime",
-        api_key=ELEVEN_API_KEY,
+    lang_code = DEEPGRAM_LANG_MAP.get(native_lang or "", "en")
+    logger.info(f"🎤 STT: Deepgram Nova-2 | language={lang_code}")
+    return deepgram.STT(
+        model="nova-2",
         language=lang_code,
+        interim_results=True,
+        smart_format=True,
+        punctuate=True,
+        filler_words=True,
+        endpointing_ms=300,
     )
 
 
 def get_elevenlabs_tts(native_lang: str | None):
     """
     ElevenLabs Flash v2.5 TTS.
-    75ms latency, 32 languages, best for real-time agents.
+    75ms latency, natural voice, best for real-time agents.
     """
     lang_code = ELEVEN_LANG_MAP.get(native_lang or "", "en")
     logger.info(f"🎙️ TTS: ElevenLabs Flash v2.5 | voice={VOICE_ID} | lang={lang_code}")
     return elevenlabs.TTS(
         model="eleven_flash_v2_5",
         voice_id=VOICE_ID,
-        api_key=ELEVEN_API_KEY,
         language=lang_code,
+        api_key=ELEVEN_API_KEY,
     )
 
 
@@ -173,7 +199,7 @@ WHEN USER SPEAKS IN {lang_name}:
 WHEN USER SPEAKS IN ENGLISH:
 - Respond in English naturally.
 - If they make a grammar mistake, gently use the correct form in your reply without pointing it out directly.
-- Give a small {lang_name} encouragement like "Bilkul sahi!", "Shabash!", "Magaling!" to celebrate.
+- Give a small {lang_name} encouragement like "Bilkul sahi!", "Shabash!", "Bagus!", "Hao!" to celebrate.
 - Ask a follow-up question to keep them speaking English.
 
 WHEN EXPLAINING GRAMMAR OR VOCABULARY:
@@ -191,12 +217,12 @@ Julian: "Shabash yaar! Perfect! So tell me, have you travelled anywhere recently
 User: "I goes to market yesterday"
 Julian: "Nice try! Thoda correction — 'I went to market yesterday' bolte hain. Ab dobara bolein!"
 
-EXAMPLES (Filipino):
-User: "kumain na ako"
-Julian: "Oh nice! Sa Filipino 'kumain na ako' — in English: 'I already ate'. Now you try!"
+EXAMPLES (Indonesian):
+User: "saya baik baik saja"
+Julian: "Oh nice! In Indonesian you said 'saya baik baik saja' — in English that's: 'I am doing well'. Now you try!"
 
-User: "I already ate"
-Julian: "Magaling! Perfect! So what did you eat? Tell me in English!"
+User: "I am doing well"
+Julian: "Bagus! Perfect! So what have you been up to today? Tell me in English!"
 
 RULES:
 - Keep each response SHORT — 2 to 3 sentences max.
@@ -240,7 +266,7 @@ class JulianAgent(Agent):
         if lang_name and lang_name != "English":
             greeting = (
                 f"Greet the user warmly — start with ONE short greeting in {lang_name} "
-                f"(e.g. Namaste / Kamusta / Hola), then switch to English immediately. "
+                f"(e.g. Namaste / Hola / Bonjour), then switch to English immediately. "
                 f"In English, tell them today you'll practice English together"
                 f"{f' about {self._topic}' if self._topic else ''}. "
                 f"Ask how they are doing in English. "
@@ -337,9 +363,9 @@ async def entrypoint(ctx: JobContext):
     ctx.room.off("participant_connected", on_participant_connected)
     logger.info(f"[entrypoint] Starting session | lang={native_lang!r} | topic={topic!r}")
 
-    # ── Session — ElevenLabs STT + TTS ────────────────────────────────────────
+    # ── Session — Deepgram STT + ElevenLabs TTS ───────────────────────────────
     session = AgentSession(
-        stt=get_elevenlabs_stt(native_lang),
+        stt=get_deepgram_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=get_elevenlabs_tts(native_lang),
         vad=ctx.proc.userdata["vad"],
