@@ -26,7 +26,7 @@ logger.info(f"BACKEND_URL    : {BACKEND_URL}")
 logger.info(f"OPENAI_API_KEY : {'set' if OPENAI_API_KEY else 'MISSING'}")
 logger.info(f"ELEVEN_API_KEY : {'set' if ELEVEN_API_KEY else 'MISSING'}")
 
-VOICE_ID = "Ms9OTvWb99V6DwRHZn6q"
+VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
 
 LANGUAGE_NAMES = {
     "hi": "Hindi",
