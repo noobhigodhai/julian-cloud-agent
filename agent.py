@@ -28,7 +28,6 @@ logger.info(f"ELEVEN_API_KEY : {'set' if ELEVEN_API_KEY else 'MISSING'}")
 
 VOICE_ID = "Ms9OTvWb99V6DwRHZn6q"
 
-# ── Only languages Deepgram Nova-2 supports ───────────────────────────────────
 LANGUAGE_NAMES = {
     "hi": "Hindi",
     "es": "Spanish",
@@ -77,8 +76,7 @@ ELEVEN_LANG_MAP = {
 
 def get_deepgram_stt(native_lang: str | None):
     """
-    Deepgram Nova-2 STT.
-    Stable long sessions, no dropout, supports all languages in our list.
+    Deepgram Nova-2 STT — stable long sessions, no dropout.
     """
     lang_code = DEEPGRAM_LANG_MAP.get(native_lang or "", "en")
     logger.info(f"🎤 STT: Deepgram Nova-2 | language={lang_code}")
@@ -95,8 +93,7 @@ def get_deepgram_stt(native_lang: str | None):
 
 def get_elevenlabs_tts(native_lang: str | None):
     """
-    ElevenLabs Flash v2.5 TTS.
-    75ms latency, natural voice, best for real-time agents.
+    ElevenLabs Flash v2.5 TTS — 75ms latency, natural voice.
     """
     lang_code = ELEVEN_LANG_MAP.get(native_lang or "", "en")
     logger.info(f"🎙️ TTS: ElevenLabs Flash v2.5 | voice={VOICE_ID} | lang={lang_code}")
@@ -219,7 +216,7 @@ Julian: "Nice try! Thoda correction — 'I went to market yesterday' bolte hain.
 
 EXAMPLES (Indonesian):
 User: "saya baik baik saja"
-Julian: "Oh nice! In Indonesian you said 'saya baik baik saja' — in English that's: 'I am doing well'. Now you try!"
+Julian: "Oh nice! In Indonesian 'saya baik baik saja' — in English: 'I am doing well'. Now you try!"
 
 User: "I am doing well"
 Julian: "Bagus! Perfect! So what have you been up to today? Tell me in English!"
