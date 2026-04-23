@@ -391,6 +391,12 @@ async def entrypoint(ctx: JobContext):
     session.on("user_speech_committed",  lambda ev: logger.info(f"[session] ✅ user_speech_committed: {getattr(ev, 'user_transcript', '')!r}"))
     session.on("agent_speech_committed", lambda ev: logger.info(f"[session] ✅ agent_speech_committed"))
 
+    def on_state_changed(ev):
+        old = getattr(ev, "old_state", "?")
+        new = getattr(ev, "new_state", "?")
+        logger.info(f"[session] state: {old} → {new}")
+    session.on("agent_state_changed", on_state_changed)
+
     @session.on("conversation_item_added")
     def on_item_added(event):
         try:
@@ -407,18 +413,26 @@ async def entrypoint(ctx: JobContext):
             logger.error(f"Error in on_item_added: {e}")
 
     async def _silence_prompt_loop():
+        last_prompt_at = 0.0
+        prompt_count   = 0
         while True:
-            await asyncio.sleep(8)
+            await asyncio.sleep(10)
             try:
                 if not transcript:
                     continue
                 last = transcript[-1]
                 if last["role"] != "assistant":
+                    prompt_count = 0  # user spoke — reset
                     continue
-                last_time = datetime.fromisoformat(last["time"])
-                silence = (datetime.utcnow() - last_time).total_seconds()
-                if silence >= 20:
-                    logger.info(f"Silence {silence:.0f}s — prompting")
+                last_time = datetime.fromisoformat(last["time"]).replace(tzinfo=None)
+                silence   = (datetime.utcnow() - last_time).total_seconds()
+                now       = asyncio.get_event_loop().time()
+                cooldown_ok = (now - last_prompt_at) >= 35
+                logger.debug(f"[silence] silence={silence:.0f}s prompts={prompt_count} cooldown_ok={cooldown_ok}")
+                if silence >= 20 and cooldown_ok and prompt_count < 3:
+                    prompt_count  += 1
+                    last_prompt_at = now
+                    logger.info(f"[silence] prompting ({prompt_count}/3) after {silence:.0f}s")
                     await session.generate_reply(
                         instructions=(
                             "The user has been quiet. "
@@ -427,6 +441,8 @@ async def entrypoint(ctx: JobContext):
                         ),
                         allow_interruptions=True,
                     )
+                elif prompt_count >= 3:
+                    logger.info("[silence] max prompts reached — staying quiet, waiting for user")
             except Exception as e:
                 logger.warning(f"Silence loop: {e}")
 
