@@ -9,9 +9,20 @@ from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProc
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger("julian-cloud-agent")
+logger.setLevel(logging.DEBUG)
+
 BACKEND_URL    = os.environ.get("BACKEND_URL", "https://specker.ai")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+logger.info("=== Julian Cloud Agent starting ===")
+logger.info(f"BACKEND_URL     : {BACKEND_URL}")
+logger.info(f"OPENAI_API_KEY  : {'set' if OPENAI_API_KEY else 'MISSING'}")
 
 LANGUAGE_NAMES = {
     "tl": "Filipino/Tagalog", "hi": "Hindi",     "bn": "Bengali",
@@ -27,6 +38,7 @@ LANGUAGE_NAMES = {
 
 def build_instructions(topic, native_lang_code):
     lang_name = LANGUAGE_NAMES.get(native_lang_code or "", None)
+    logger.debug(f"build_instructions | lang_code={native_lang_code!r} → lang_name={lang_name!r} | topic={topic!r}")
     topic_line = (
         f"Today's conversation topic is: {topic}. Start the conversation around this topic naturally."
         if topic else "You can talk about anything — ask what's on the user's mind."
@@ -38,8 +50,10 @@ def build_instructions(topic, native_lang_code):
 - Example (Filipino): "Kamusta ka? So how was your day today? Okay lang ba?"
 - Example (Hindi): "Arre yaar, that was really good! Aur bolo, kya chal raha hai?"
 - NEVER speak 100% in {lang_name} — always keep English as the base."""
+        logger.info(f"Language mode: MIXED ({lang_name} + English)")
     else:
         lang_line = "Speak naturally in English only."
+        logger.info("Language mode: English only")
 
     return f"""You are Julian, a warm, patient, encouraging AI English coach on a phone call.
 
@@ -130,6 +144,7 @@ class JulianAgent(Agent):
             greeting = "Greet the user warmly and ask how they are doing today."
         if self._topic:
             greeting += f" Then naturally bring up today's topic: {self._topic}."
+        logger.info(f"[on_enter] greeting instruction: {greeting}")
         await self.session.generate_reply(instructions=greeting, allow_interruptions=True)
 
 
@@ -150,30 +165,39 @@ async def entrypoint(ctx: JobContext):
     topic = None
     native_lang = None
 
+    logger.info(f"[entrypoint] room={ctx.room.name} | remote_participants={len(ctx.room.remote_participants)}")
+
     for p in ctx.room.remote_participants.values():
         participant_identity = p.identity
+        raw_meta = p.metadata or "{}"
+        logger.debug(f"[entrypoint] raw metadata: {raw_meta}")
         try:
-            meta = json.loads(p.metadata or "{}")
+            meta = json.loads(raw_meta)
             user_email  = meta.get("email")
             user_id     = meta.get("userId")
             topic       = meta.get("topic")
             native_lang = meta.get("nativeLang")
-            logger.info(f"Participant: {participant_identity} | userId: {user_id} | topic: {topic} | lang: {native_lang}")
+            logger.info(f"[entrypoint] Participant: {participant_identity} | userId={user_id} | email={user_email} | topic={topic!r} | nativeLang={native_lang!r}")
         except Exception as e:
             logger.error(f"Metadata parse error: {e}")
         break
+
+    if not participant_identity:
+        logger.warning("[entrypoint] No remote participants yet — waiting for join event")
 
     def on_participant_connected(participant):
         nonlocal participant_identity, user_email, user_id, topic, native_lang
         if participant_identity is None:
             participant_identity = participant.identity
+            raw_meta = participant.metadata or "{}"
+            logger.debug(f"[on_participant_connected] raw metadata: {raw_meta}")
             try:
-                meta = json.loads(participant.metadata or "{}")
+                meta = json.loads(raw_meta)
                 user_email  = meta.get("email")
                 user_id     = meta.get("userId")
                 topic       = meta.get("topic")
                 native_lang = meta.get("nativeLang")
-                logger.info(f"Joined: {participant_identity} | userId: {user_id}")
+                logger.info(f"[on_participant_connected] identity={participant_identity} | userId={user_id} | nativeLang={native_lang!r}")
             except Exception as e:
                 logger.error(f"Metadata parse error: {e}")
 
@@ -195,6 +219,11 @@ async def entrypoint(ctx: JobContext):
         tts=deepgram.TTS(model="aura-2-thalia-en"),
         vad=ctx.proc.userdata["vad"],
     )
+
+    session.on("user_speech_started",   lambda _:  logger.debug("[session] user_speech_started"))
+    session.on("agent_speech_started",  lambda _:  logger.debug("[session] agent_speech_started"))
+    session.on("user_speech_committed", lambda ev: logger.debug(f"[session] user_speech_committed: {getattr(ev, 'user_transcript', '')!r}"))
+    session.on("agent_speech_committed",lambda ev: logger.debug(f"[session] agent_speech_committed: {getattr(ev, 'agent_transcript', '')!r}"))
 
     @session.on("conversation_item_added")
     def on_item_added(event):
