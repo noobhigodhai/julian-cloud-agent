@@ -167,41 +167,44 @@ async def entrypoint(ctx: JobContext):
 
     logger.info(f"[entrypoint] room={ctx.room.name} | remote_participants={len(ctx.room.remote_participants)}")
 
-    for p in ctx.room.remote_participants.values():
-        participant_identity = p.identity
-        raw_meta = p.metadata or "{}"
-        logger.debug(f"[entrypoint] raw metadata: {raw_meta}")
+    def _parse_meta(participant):
+        nonlocal participant_identity, user_email, user_id, topic, native_lang
+        participant_identity = participant.identity
+        raw_meta = participant.metadata or "{}"
+        logger.debug(f"[meta] raw: {raw_meta}")
         try:
             meta = json.loads(raw_meta)
             user_email  = meta.get("email")
             user_id     = meta.get("userId")
             topic       = meta.get("topic")
             native_lang = meta.get("nativeLang")
-            logger.info(f"[entrypoint] Participant: {participant_identity} | userId={user_id} | email={user_email} | topic={topic!r} | nativeLang={native_lang!r}")
+            logger.info(f"[meta] identity={participant_identity} | userId={user_id} | topic={topic!r} | nativeLang={native_lang!r}")
         except Exception as e:
             logger.error(f"Metadata parse error: {e}")
+
+    # If participant is already in the room, grab their metadata now
+    for p in ctx.room.remote_participants.values():
+        _parse_meta(p)
         break
 
+    # If not yet connected, wait up to 30s for them to join
     if not participant_identity:
-        logger.warning("[entrypoint] No remote participants yet — waiting for join event")
+        logger.info("[entrypoint] No participant yet — waiting for join...")
+        meta_ready = asyncio.Event()
 
-    def on_participant_connected(participant):
-        nonlocal participant_identity, user_email, user_id, topic, native_lang
-        if participant_identity is None:
-            participant_identity = participant.identity
-            raw_meta = participant.metadata or "{}"
-            logger.debug(f"[on_participant_connected] raw metadata: {raw_meta}")
-            try:
-                meta = json.loads(raw_meta)
-                user_email  = meta.get("email")
-                user_id     = meta.get("userId")
-                topic       = meta.get("topic")
-                native_lang = meta.get("nativeLang")
-                logger.info(f"[on_participant_connected] identity={participant_identity} | userId={user_id} | nativeLang={native_lang!r}")
-            except Exception as e:
-                logger.error(f"Metadata parse error: {e}")
+        def on_early_connect(participant):
+            _parse_meta(participant)
+            meta_ready.set()
 
-    ctx.room.on("participant_connected", on_participant_connected)
+        ctx.room.on("participant_connected", on_early_connect)
+        try:
+            await asyncio.wait_for(meta_ready.wait(), timeout=30)
+            logger.info(f"[entrypoint] Participant arrived | nativeLang={native_lang!r}")
+        except asyncio.TimeoutError:
+            logger.warning("[entrypoint] Timed out waiting for participant — starting with defaults")
+        ctx.room.off("participant_connected", on_early_connect)
+
+    logger.info(f"[entrypoint] Starting session | lang={native_lang!r} | topic={topic!r}")
 
     # Use only guaranteed-valid STT params
     stt = deepgram.STT(
