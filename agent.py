@@ -4,12 +4,14 @@ import json
 import httpx
 import asyncio
 from datetime import datetime
+from openai import AsyncOpenAI
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram
 
 logger = logging.getLogger("julian-cloud-agent")
-BACKEND_URL = os.environ.get("BACKEND_URL", "https://specker.ai")
+BACKEND_URL    = os.environ.get("BACKEND_URL", "https://specker.ai")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 LANGUAGE_NAMES = {
     "tl": "Filipino/Tagalog", "hi": "Hindi",     "bn": "Bengali",
@@ -52,6 +54,66 @@ If user makes a grammar mistake, use the correct form naturally in your reply wi
 LISTENING: Always wait for the user to fully finish before responding.
 Never interrupt. If the user pauses briefly, wait — they may still be thinking.
 Stay fully engaged. If user is quiet over 20 seconds, gently check in."""
+
+
+async def analyze_with_gpt(transcript: list, duration: int) -> dict:
+    try:
+        client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        transcript_text = "\n".join([
+            f"{'User' if m['role'] == 'user' else 'Julian'}: {m['text']}"
+            for m in transcript
+        ])
+        prompt = f"""Analyze this English language learning conversation and return a detailed JSON report.
+
+TRANSCRIPT:
+{transcript_text}
+
+DURATION: {duration // 60} minutes {duration % 60} seconds
+
+Return ONLY valid JSON with no markdown or explanation:
+{{
+  "overall_score": <0-100>,
+  "summary": "<2-3 sentence summary>",
+  "grammar": {{
+    "score": <0-100>,
+    "mistakes": [{{"original": "", "corrected": "", "explanation": ""}}],
+    "feedback": "<1-2 sentences>"
+  }},
+  "vocabulary": {{
+    "score": <0-100>,
+    "advanced_words_used": [],
+    "suggestions": [],
+    "feedback": "<1-2 sentences>"
+  }},
+  "fluency": {{
+    "score": <0-100>,
+    "filler_words_detected": [],
+    "pace": "<too fast | good | too slow>",
+    "feedback": "<1-2 sentences>"
+  }},
+  "confidence": {{
+    "score": <0-100>,
+    "feedback": "<1-2 sentences>"
+  }},
+  "pronunciation_tips": [{{"word": "", "tip": ""}}],
+  "strengths": [],
+  "areas_to_improve": [],
+  "next_steps": []
+}}"""
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return json.loads(raw.strip())
+    except Exception as e:
+        logger.error(f"GPT analysis error: {e}")
+        return {}
 
 
 class JulianAgent(Agent):
@@ -180,14 +242,23 @@ async def entrypoint(ctx: JobContext):
         if not transcript:
             return
         duration = int((datetime.utcnow() - start_time).total_seconds())
+
+        logger.info("Running GPT grammar/sentence analysis...")
+        gpt_result = await analyze_with_gpt(transcript, duration)
+        if gpt_result:
+            logger.info(f"GPT analysis done. Overall score: {gpt_result.get('overall_score')}")
+        else:
+            logger.warning("GPT analysis returned empty result")
+
         payload = {
             "roomName": ctx.room.name, "participantIdentity": participant_identity,
             "userEmail": user_email, "userId": user_id, "duration": duration,
             "transcript": transcript, "topic": topic, "nativeLang": native_lang,
+            "analysis": gpt_result,
             "timestamp": datetime.utcnow().isoformat(),
         }
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=30) as client:
                 res = await client.post(f"{BACKEND_URL}/api/call-report",
                     json=payload, headers={"Content-Type": "application/json"})
                 logger.info(f"✅ Sent: {res.status_code}")
