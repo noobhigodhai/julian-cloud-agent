@@ -26,7 +26,7 @@ logger.info(f"BACKEND_URL    : {BACKEND_URL}")
 logger.info(f"OPENAI_API_KEY : {'set' if OPENAI_API_KEY else 'MISSING'}")
 logger.info(f"ELEVEN_API_KEY : {'set' if ELEVEN_API_KEY else 'MISSING'}")
 
-VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
+VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # Rachel — default ElevenLabs voice
 
 LANGUAGE_NAMES = {
     "hi": "Hindi",
@@ -44,21 +44,6 @@ LANGUAGE_NAMES = {
 }
 
 DEEPGRAM_LANG_MAP = {
-    "hi": "hi",
-    "es": "es",
-    "fr": "fr",
-    "de": "de",
-    "pt": "pt",
-    "ja": "ja",
-    "ko": "ko",
-    "ar": "ar",
-    "id": "id",
-    "vi": "vi",
-    "zh": "zh",
-    "en": "en",
-}
-
-ELEVEN_LANG_MAP = {
     "hi": "hi",
     "es": "es",
     "fr": "fr",
@@ -94,13 +79,12 @@ def get_deepgram_stt(native_lang: str | None):
 def get_elevenlabs_tts(native_lang: str | None):
     """
     ElevenLabs Flash v2.5 TTS — 75ms latency, natural voice.
+    Auto-detects language from text — no language param needed.
     """
-    lang_code = ELEVEN_LANG_MAP.get(native_lang or "", "en")
-    logger.info(f"🎙️ TTS: ElevenLabs Flash v2.5 | voice={VOICE_ID} | lang={lang_code}")
+    logger.info(f"🎙️ TTS: ElevenLabs Flash v2.5 | voice={VOICE_ID}")
     return elevenlabs.TTS(
         model="eleven_flash_v2_5",
         voice_id=VOICE_ID,
-        language=lang_code,
         api_key=ELEVEN_API_KEY,
     )
 
