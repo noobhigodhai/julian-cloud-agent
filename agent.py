@@ -7,7 +7,7 @@ from datetime import datetime
 from openai import AsyncOpenAI
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
-from livekit.plugins import openai, deepgram
+from livekit.plugins import openai, google
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,38 +36,102 @@ LANGUAGE_NAMES = {
     "en": "English",
 }
 
-def build_instructions(topic, native_lang_code):
-    lang_name = LANGUAGE_NAMES.get(native_lang_code or "", None)
-    logger.debug(f"build_instructions | lang_code={native_lang_code!r} → lang_name={lang_name!r} | topic={topic!r}")
-    topic_line = (
-        f"Today's conversation topic is: {topic}. Start the conversation around this topic naturally."
-        if topic else "You can talk about anything — ask what's on the user's mind."
+def get_google_stt(native_lang: str | None):
+    """
+    Google STT — single native language per user.
+    Single language avoids Google defaulting to English.
+    Native language STT handles English words too (code-switching).
+    """
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+    creds = json.loads(creds_json) if creds_json else None
+
+    lang_map = {
+        "hi": "hi-IN",
+        "tl": "fil-PH",
+        "ta": "ta-IN",
+        "te": "te-IN",
+        "bn": "bn-IN",
+        "mr": "mr-IN",
+        "gu": "gu-IN",
+        "kn": "kn-IN",
+        "ml": "ml-IN",
+        "pa": "pa-IN",
+        "ur": "ur-IN",
+        "id": "id-ID",
+        "ms": "ms-MY",
+        "ko": "ko-KR",
+        "ja": "ja-JP",
+        "ar": "ar-XA",
+        "es": "es-ES",
+        "fr": "fr-FR",
+        "de": "de-DE",
+        "pt": "pt-BR",
+        "zh": "cmn-Hans-CN",
+        "vi": "vi-VN",
+        "en": "en-US",
+    }
+
+    lang_code = lang_map.get(native_lang or "", "en-US")
+    logger.info(f"🎤 STT: Google | language={lang_code}")
+
+    return google.STT(
+        languages=[lang_code],
+        credentials_info=creds,
     )
-    if lang_name and lang_name != "English":
-        lang_line = f"""You MUST speak in a natural mix of {lang_name} and English (code-switching).
-- Greet in {lang_name} first, then switch to mixed speech.
-- Use English for explanations and corrections, {lang_name} for warmth and encouragement.
-- Example (Filipino): "Kamusta ka? So how was your day today? Okay lang ba?"
-- Example (Hindi): "Arre yaar, that was really good! Aur bolo, kya chal raha hai?"
-- NEVER speak 100% in {lang_name} — always keep English as the base."""
-        logger.info(f"Language mode: MIXED ({lang_name} + English)")
-    else:
-        lang_line = "Speak naturally in English only."
-        logger.info("Language mode: English only")
 
-    return f"""You are Julian, a warm, patient, encouraging AI English coach on a phone call.
 
-STYLE: Keep each response to 1-2 sentences. Always end with a follow-up question.
-Be genuinely curious. Respond directly to what the user just said.
-If user makes a grammar mistake, use the correct form naturally in your reply without pointing it out.
+def get_google_tts(native_lang: str | None):
+    """
+    Chirp3-HD voices with native language codes.
+    Only Chirp3-HD supports streaming synthesis in LiveKit.
+    """
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+    creds = json.loads(creds_json) if creds_json else None
 
-{topic_line}
+    voice_map = {
+        "hi": ("hi-IN-Chirp3-HD-Aoede",  "hi-IN"),
+        "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),
+        "ta": ("ta-IN-Chirp3-HD-Aoede",  "ta-IN"),
+        "te": ("te-IN-Chirp3-HD-Aoede",  "te-IN"),
+        "bn": ("bn-IN-Chirp3-HD-Aoede",  "bn-IN"),
+        "mr": ("mr-IN-Chirp3-HD-Aoede",  "mr-IN"),
+        "gu": ("gu-IN-Chirp3-HD-Aoede",  "gu-IN"),
+        "kn": ("kn-IN-Chirp3-HD-Aoede",  "kn-IN"),
+        "ml": ("ml-IN-Chirp3-HD-Aoede",  "ml-IN"),
+        "pa": ("pa-IN-Chirp3-HD-Aoede",  "pa-IN"),
+        "ur": ("ur-IN-Chirp3-HD-Aoede",  "ur-IN"),
+        "id": ("id-ID-Chirp3-HD-Aoede",  "id-ID"),
+        "ms": ("ms-MY-Chirp3-HD-Aoede",  "ms-MY"),
+        "ko": ("ko-KR-Chirp3-HD-Aoede",  "ko-KR"),
+        "ja": ("ja-JP-Chirp3-HD-Aoede",  "ja-JP"),
+        "ar": ("ar-XA-Chirp3-HD-Aoede",  "ar-XA"),
+        "es": ("es-ES-Chirp3-HD-Aoede",  "es-ES"),
+        "fr": ("fr-FR-Chirp3-HD-Aoede",  "fr-FR"),
+        "de": ("de-DE-Chirp3-HD-Aoede",  "de-DE"),
+        "pt": ("pt-BR-Chirp3-HD-Aoede",  "pt-BR"),
+        "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),
+        "vi": ("vi-VN-Chirp3-HD-Aoede",  "vi-VN"),
+        "en": ("en-US-Chirp3-HD-Aoede",  "en-US"),
+    }
 
-{lang_line}
+    voice_name, language = voice_map.get(native_lang or "", ("en-US-Chirp3-HD-Aoede", "en-US"))
+    logger.info(f"🎙️ TTS voice: {voice_name} | language: {language}")
 
-LISTENING: Always wait for the user to fully finish before responding.
-Never interrupt. If the user pauses briefly, wait — they may still be thinking.
-Stay fully engaged. If user is quiet over 20 seconds, gently check in."""
+    try:
+        return google.TTS(
+            voice_name=voice_name,
+            language=language,
+            gender="female",
+            credentials_info=creds,
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ Voice {voice_name} failed ({e}) — fallback to en-US")
+        return google.TTS(
+            voice_name="en-US-Chirp3-HD-Aoede",
+            language="en-US",
+            gender="female",
+            credentials_info=creds,
+        )
 
 
 async def analyze_with_gpt(transcript: list, duration: int) -> dict:
@@ -130,6 +194,77 @@ Return ONLY valid JSON with no markdown or explanation:
         return {}
 
 
+def build_instructions(topic, native_lang_code):
+    lang_name = LANGUAGE_NAMES.get(native_lang_code or "", None)
+    logger.debug(f"build_instructions | lang_code={native_lang_code!r} → lang_name={lang_name!r} | topic={topic!r}")
+
+    topic_line = (
+        f"Today's conversation topic is: {topic}. Keep the conversation around this topic."
+        if topic else
+        "You can talk about anything — ask what's on the user's mind."
+    )
+
+    if lang_name and lang_name != "English":
+        lang_line = f"""
+You are an English coach. The user speaks {lang_name} and is learning English.
+
+YOUR ROLE:
+- You are a fun, warm, encouraging English coach on a phone call.
+- Your job is to help the user PRACTICE speaking English.
+- You speak in English always. Use {lang_name} only for tiny warm filler words like
+  "yaar", "arre", "acha", "sahi hai", "Kamusta" — never full {lang_name} sentences.
+
+WHEN USER SPEAKS IN {lang_name}:
+- Step 1: Acknowledge warmly what they said in English.
+- Step 2: Teach them how to say it in English naturally.
+- Step 3: Ask them to retry and say it in English.
+- Step 4: When they try, praise them and continue the conversation.
+
+EXAMPLES:
+User: "main theek hoon"
+You: "Oh nice, so you're doing well! In English you'd say: I am doing fine. Now you try saying that!"
+
+User: "mujhe travel bahut pasand hai"
+You: "Acha! You love travelling! In English say: I love to travel. Go ahead, give it a try!"
+
+User: "I love to travel"
+You: "Yes! Perfect yaar! So where would you love to travel to?"
+
+User: "kamusta ka"
+You: "Oh you asked how I am! In English that's: How are you? Now you try saying it!"
+
+WHEN USER SPEAKS IN ENGLISH:
+- Celebrate their effort warmly.
+- Gently correct any mistakes by naturally using the correct version in your reply.
+- Ask a follow-up question to keep them talking in English.
+
+RULES:
+- Keep each response to 2 to 3 sentences max.
+- Always end with either a retry request OR a follow-up question in English.
+- Never lecture. Keep it fun and encouraging like a friend.
+- ONLY speak the words. No stage directions, no brackets, no labels.
+"""
+        logger.info(f"Language mode: COACH ({lang_name} → English practice)")
+    else:
+        lang_line = """
+Speak naturally in English only.
+Gently correct any mistakes by naturally using the correct version in your reply.
+Keep responses short — 1 to 2 sentences. Always ask a follow-up question.
+"""
+        logger.info("Language mode: English only")
+
+    return f"""You are Julian, a warm, patient, encouraging AI English coach on a phone call.
+Be friendly and fun — like a supportive bilingual friend.
+
+{topic_line}
+
+{lang_line}
+
+LISTENING: Always wait for the user to fully finish before responding.
+Never interrupt. If the user pauses briefly, wait — they may still be thinking.
+If user is quiet for over 20 seconds, gently check in."""
+
+
 class JulianAgent(Agent):
     def __init__(self, topic=None, native_lang=None):
         self._topic       = topic
@@ -138,12 +273,25 @@ class JulianAgent(Agent):
 
     async def on_enter(self):
         lang_name = LANGUAGE_NAMES.get(self._native_lang or "", None)
+
         if lang_name and lang_name != "English":
-            greeting = (f"Greet warmly in {lang_name} (one short phrase), then switch to mixed {lang_name} and English. Ask how they are doing today.")
+            greeting = (
+                f"Greet the user with ONE short warm {lang_name} phrase only "
+                f"(like Namaste / Kamusta / Hola), then immediately switch to English. "
+                f"In English tell them today you'll practice speaking English together"
+                f"{f' about {self._topic}' if self._topic else ''}. "
+                f"Ask how they are doing in English. "
+                f"Keep it to 2 sentences max. "
+                f"Speak ONLY the words — no labels, no brackets."
+            )
         else:
-            greeting = "Greet the user warmly and ask how they are doing today."
-        if self._topic:
-            greeting += f" Then naturally bring up today's topic: {self._topic}."
+            greeting = (
+                f"Greet the user warmly in English. "
+                f"Tell them today you'll practice English together"
+                f"{f' about {self._topic}' if self._topic else ''}. "
+                f"Ask how they are doing today."
+            )
+
         logger.info(f"[on_enter] greeting instruction: {greeting}")
         await self.session.generate_reply(instructions=greeting, allow_interruptions=True)
 
@@ -182,12 +330,10 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.error(f"Metadata parse error: {e}")
 
-    # If participant is already in the room, grab their metadata now
     for p in ctx.room.remote_participants.values():
         _parse_meta(p)
         break
 
-    # If not yet connected, wait up to 30s for them to join
     if not participant_identity:
         logger.info("[entrypoint] No participant yet — waiting for join...")
         meta_ready = asyncio.Event()
@@ -201,32 +347,23 @@ async def entrypoint(ctx: JobContext):
             await asyncio.wait_for(meta_ready.wait(), timeout=30)
             logger.info(f"[entrypoint] Participant arrived | nativeLang={native_lang!r}")
         except asyncio.TimeoutError:
-            logger.warning("[entrypoint] Timed out waiting for participant — starting with defaults")
+            logger.warning("[entrypoint] Timed out — starting with defaults")
         ctx.room.off("participant_connected", on_early_connect)
 
     logger.info(f"[entrypoint] Starting session | lang={native_lang!r} | topic={topic!r}")
 
-    # Use only guaranteed-valid STT params
-    stt = deepgram.STT(
-        model="nova-2",
-        language="en",
-        interim_results=True,
-        smart_format=True,
-        punctuate=True,
-        filler_words=True,
-    )
-
+    # ── Session — fully Google STT + TTS ─────────────────────────────────────
     session = AgentSession(
-        stt=stt,
+        stt=get_google_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=deepgram.TTS(model="aura-2-thalia-en"),
+        tts=get_google_tts(native_lang),
         vad=ctx.proc.userdata["vad"],
     )
 
-    session.on("user_speech_started",   lambda _:  logger.debug("[session] user_speech_started"))
-    session.on("agent_speech_started",  lambda _:  logger.debug("[session] agent_speech_started"))
-    session.on("user_speech_committed", lambda ev: logger.debug(f"[session] user_speech_committed: {getattr(ev, 'user_transcript', '')!r}"))
-    session.on("agent_speech_committed",lambda ev: logger.debug(f"[session] agent_speech_committed: {getattr(ev, 'agent_transcript', '')!r}"))
+    session.on("user_speech_started",    lambda _:  logger.debug("[session] user_speech_started"))
+    session.on("agent_speech_started",   lambda _:  logger.debug("[session] agent_speech_started"))
+    session.on("user_speech_committed",  lambda ev: logger.debug(f"[session] user_speech_committed: {getattr(ev, 'user_transcript', '')!r}"))
+    session.on("agent_speech_committed", lambda ev: logger.debug(f"[session] agent_speech_committed: {getattr(ev, 'agent_transcript', '')!r}"))
 
     @session.on("conversation_item_added")
     def on_item_added(event):
@@ -263,9 +400,11 @@ async def entrypoint(ctx: JobContext):
     async def _save_utterance(uid, room_name, entry):
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                await client.post(f"{BACKEND_URL}/api/live-transcript",
+                await client.post(
+                    f"{BACKEND_URL}/api/live-transcript",
                     json={"userId": uid, "roomName": room_name, "entry": entry},
-                    headers={"Content-Type": "application/json"})
+                    headers={"Content-Type": "application/json"},
+                )
         except Exception as e:
             logger.warning(f"Live transcript save failed: {e}")
 
@@ -275,31 +414,42 @@ async def entrypoint(ctx: JobContext):
             return
         duration = int((datetime.utcnow() - start_time).total_seconds())
 
-        logger.info("Running GPT grammar/sentence analysis...")
+        logger.info("Running GPT analysis...")
         gpt_result = await analyze_with_gpt(transcript, duration)
         if gpt_result:
-            logger.info(f"GPT analysis done. Overall score: {gpt_result.get('overall_score')}")
+            logger.info(f"GPT done. Score: {gpt_result.get('overall_score')}")
         else:
-            logger.warning("GPT analysis returned empty result")
+            logger.warning("GPT analysis returned empty")
 
         payload = {
-            "roomName": ctx.room.name, "participantIdentity": participant_identity,
-            "userEmail": user_email, "userId": user_id, "duration": duration,
-            "transcript": transcript, "topic": topic, "nativeLang": native_lang,
+            "roomName": ctx.room.name,
+            "participantIdentity": participant_identity,
+            "userEmail": user_email,
+            "userId": user_id,
+            "duration": duration,
+            "transcript": transcript,
+            "topic": topic,
+            "nativeLang": native_lang,
             "analysis": gpt_result,
             "timestamp": datetime.utcnow().isoformat(),
         }
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                res = await client.post(f"{BACKEND_URL}/api/call-report",
-                    json=payload, headers={"Content-Type": "application/json"})
+                res = await client.post(
+                    f"{BACKEND_URL}/api/call-report",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
                 logger.info(f"✅ Sent: {res.status_code}")
         except Exception as e:
             logger.error(f"Failed to send: {e}")
 
     ctx.add_shutdown_callback(on_shutdown)
 
-    await session.start(agent=JulianAgent(topic=topic, native_lang=native_lang), room=ctx.room)
+    await session.start(
+        agent=JulianAgent(topic=topic, native_lang=native_lang),
+        room=ctx.room,
+    )
 
     silence_task = asyncio.create_task(_silence_prompt_loop())
     disconnect_event = asyncio.Event()
