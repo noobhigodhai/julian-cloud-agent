@@ -37,11 +37,6 @@ LANGUAGE_NAMES = {
 }
 
 def get_google_stt(native_lang: str | None):
-    """
-    Google STT — single native language per user.
-    Single language avoids Google defaulting to English.
-    Native language STT handles English words too (code-switching).
-    """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
@@ -81,10 +76,6 @@ def get_google_stt(native_lang: str | None):
 
 
 def get_google_tts(native_lang: str | None):
-    """
-    Chirp3-HD voices with native language codes.
-    Only Chirp3-HD supports streaming synthesis in LiveKit.
-    """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
@@ -308,51 +299,71 @@ async def entrypoint(ctx: JobContext):
     transcript = []
     start_time = datetime.utcnow()
     participant_identity = None
-    user_email = None
-    user_id = None
-    topic = None
+    user_email  = None
+    user_id     = None
+    topic       = None
     native_lang = None
 
-    logger.info(f"[entrypoint] room={ctx.room.name} | remote_participants={len(ctx.room.remote_participants)}")
+    # ── Step 1: Read from job dispatch metadata FIRST (available immediately) ──
+    try:
+        job_meta = json.loads(ctx.job.metadata or "{}")
+        user_email  = job_meta.get("email")
+        user_id     = job_meta.get("userId")
+        topic       = job_meta.get("topic")
+        native_lang = job_meta.get("nativeLang")
+        logger.info(f"[job_meta] userId={user_id} | topic={topic!r} | nativeLang={native_lang!r}")
+    except Exception as e:
+        logger.warning(f"[job_meta] parse error: {e}")
+
+    logger.info(f"[entrypoint] room={ctx.room.name}")
 
     def _parse_meta(participant):
         nonlocal participant_identity, user_email, user_id, topic, native_lang
         participant_identity = participant.identity
         raw_meta = participant.metadata or "{}"
-        logger.debug(f"[meta] raw: {raw_meta}")
+        logger.debug(f"[participant_meta] raw: {raw_meta}")
         try:
             meta = json.loads(raw_meta)
-            user_email  = meta.get("email")
-            user_id     = meta.get("userId")
-            topic       = meta.get("topic")
-            native_lang = meta.get("nativeLang")
-            logger.info(f"[meta] identity={participant_identity} | userId={user_id} | topic={topic!r} | nativeLang={native_lang!r}")
+            # Only override if values are still missing
+            user_email  = meta.get("email")      or user_email
+            user_id     = meta.get("userId")     or user_id
+            topic       = meta.get("topic")      or topic
+            native_lang = meta.get("nativeLang") or native_lang
+            logger.info(f"[participant_meta] identity={participant_identity} | topic={topic!r} | nativeLang={native_lang!r}")
         except Exception as e:
-            logger.error(f"Metadata parse error: {e}")
+            logger.error(f"Participant metadata parse error: {e}")
 
+    # ── Step 2: Register listener BEFORE connecting ───────────────────────────
+    meta_ready = asyncio.Event()
+
+    def on_participant_connected(participant):
+        _parse_meta(participant)
+        meta_ready.set()
+
+    ctx.room.on("participant_connected", on_participant_connected)
+
+    # ── Step 3: Connect to room ───────────────────────────────────────────────
+    await ctx.connect()
+
+    # ── Step 4: Check if participant already in room ──────────────────────────
     for p in ctx.room.remote_participants.values():
         _parse_meta(p)
+        meta_ready.set()
         break
 
-    if not participant_identity:
-        logger.info("[entrypoint] No participant yet — waiting for join...")
-        meta_ready = asyncio.Event()
-
-        def on_early_connect(participant):
-            _parse_meta(participant)
-            meta_ready.set()
-
-        ctx.room.on("participant_connected", on_early_connect)
+    # ── Step 5: Wait up to 15s for participant if not already joined ──────────
+    if not meta_ready.is_set():
+        logger.info("[entrypoint] Waiting for participant to join...")
         try:
-            await asyncio.wait_for(meta_ready.wait(), timeout=30)
+            await asyncio.wait_for(meta_ready.wait(), timeout=15.0)
             logger.info(f"[entrypoint] Participant arrived | nativeLang={native_lang!r}")
         except asyncio.TimeoutError:
-            logger.warning("[entrypoint] Timed out — starting with defaults")
-        ctx.room.off("participant_connected", on_early_connect)
+            logger.warning("[entrypoint] Participant join timed out — using job metadata")
 
+    ctx.room.off("participant_connected", on_participant_connected)
     logger.info(f"[entrypoint] Starting session | lang={native_lang!r} | topic={topic!r}")
 
-    # ── Session — fully Google STT + TTS ─────────────────────────────────────
+    # ── Session — fully Google STT + TTS ──────────────────────────────────────
     session = AgentSession(
         stt=get_google_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
@@ -422,16 +433,16 @@ async def entrypoint(ctx: JobContext):
             logger.warning("GPT analysis returned empty")
 
         payload = {
-            "roomName": ctx.room.name,
+            "roomName":            ctx.room.name,
             "participantIdentity": participant_identity,
-            "userEmail": user_email,
-            "userId": user_id,
-            "duration": duration,
-            "transcript": transcript,
-            "topic": topic,
-            "nativeLang": native_lang,
-            "analysis": gpt_result,
-            "timestamp": datetime.utcnow().isoformat(),
+            "userEmail":           user_email,
+            "userId":              user_id,
+            "duration":            duration,
+            "transcript":          transcript,
+            "topic":               topic,
+            "nativeLang":          native_lang,
+            "analysis":            gpt_result,
+            "timestamp":           datetime.utcnow().isoformat(),
         }
         try:
             async with httpx.AsyncClient(timeout=30) as client:
