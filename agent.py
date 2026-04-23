@@ -5,9 +5,9 @@ import httpx
 import asyncio
 from datetime import datetime
 from openai import AsyncOpenAI
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
+from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli, inference
 from livekit.plugins import silero
-from livekit.plugins import openai, google, deepgram
+from livekit.plugins import openai, elevenlabs
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,12 +17,14 @@ logging.basicConfig(
 logger = logging.getLogger("julian-cloud-agent")
 logger.setLevel(logging.DEBUG)
 
-BACKEND_URL    = os.environ.get("BACKEND_URL", "https://specker.ai")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+BACKEND_URL      = os.environ.get("BACKEND_URL", "https://specker.ai")
+OPENAI_API_KEY   = os.environ.get("OPENAI_API_KEY")
+ELEVEN_API_KEY   = os.environ.get("ELEVEN_API_KEY")
 
 logger.info("=== Julian Cloud Agent starting ===")
 logger.info(f"BACKEND_URL     : {BACKEND_URL}")
 logger.info(f"OPENAI_API_KEY  : {'set' if OPENAI_API_KEY else 'MISSING'}")
+logger.info(f"ELEVEN_API_KEY  : {'set' if ELEVEN_API_KEY else 'MISSING'}")
 
 LANGUAGE_NAMES = {
     "tl": "Filipino/Tagalog", "hi": "Hindi",     "bn": "Bengali",
@@ -36,112 +38,54 @@ LANGUAGE_NAMES = {
     "en": "English",
 }
 
-# Deepgram Nova-2 supported languages — stable long sessions
-DEEPGRAM_SUPPORTED = {
-    "hi", "es", "fr", "de", "pt", "ja",
-    "ko", "ar", "id", "vi", "zh", "en",
+# ElevenLabs STT language codes
+ELEVEN_LANG_MAP = {
+    "hi": "hi",   "tl": "fil",  "ta": "ta",
+    "te": "te",   "bn": "bn",   "mr": "mr",
+    "gu": "gu",   "kn": "kn",   "ml": "ml",
+    "pa": "pa",   "ur": "ur",   "id": "id",
+    "ms": "ms",   "ko": "ko",   "ja": "ja",
+    "ar": "ar",   "es": "es",   "fr": "fr",
+    "de": "de",   "pt": "pt",   "zh": "zh",
+    "vi": "vi",   "en": "en",
 }
 
-DEEPGRAM_LANG_MAP = {
-    "hi": "hi", "es": "es", "fr": "fr", "de": "de",
-    "pt": "pt", "ja": "ja", "ko": "ko", "ar": "ar",
-    "id": "id", "vi": "vi", "zh": "zh", "en": "en",
-}
-
-# Google STT for languages Deepgram doesn't support well
-GOOGLE_STT_LANG_MAP = {
-    "tl": "fil-PH", "ta": "ta-IN", "te": "te-IN",
-    "bn": "bn-IN",  "mr": "mr-IN", "gu": "gu-IN",
-    "kn": "kn-IN",  "ml": "ml-IN", "pa": "pa-IN",
-    "ur": "ur-IN",  "ms": "ms-MY",
-}
+# ── Voice IDs — warm female voices from ElevenLabs voice library ──────────────
+# These are default ElevenLabs voices that work well for multilingual tutoring.
+# You can replace VOICE_ID with any voice from elevenlabs.io/voice-library
+VOICE_ID = "cgSgspJ2msm6clMCkdW9"  # Jessica — warm, friendly, clear
 
 
-def get_stt(native_lang: str | None):
+def get_elevenlabs_stt(native_lang: str | None):
     """
-    Hybrid STT:
-    - Deepgram Nova-2 for supported languages (stable, no stream dropout)
-    - Google Chirp2 for Indian/other languages Deepgram doesn't support
+    ElevenLabs Scribe v2 Realtime STT.
+    Supports 90+ languages including all Indian languages, Filipino etc.
+    No stream dropout. 150ms latency.
     """
-    lang = native_lang or "en"
+    lang_code = ELEVEN_LANG_MAP.get(native_lang or "", "en")
+    logger.info(f"🎤 STT: ElevenLabs Scribe v2 Realtime | language={lang_code}")
 
-    if lang in DEEPGRAM_SUPPORTED:
-        lang_code = DEEPGRAM_LANG_MAP.get(lang, "en")
-        logger.info(f"🎤 STT: Deepgram Nova-2 | language={lang_code}")
-        return deepgram.STT(
-            model="nova-2",
-            language=lang_code,
-            interim_results=True,
-            smart_format=True,
-            punctuate=True,
-            filler_words=True,
-            endpointing_ms=300,
-        )
-    else:
-        creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
-        creds = json.loads(creds_json) if creds_json else None
-        lang_code = GOOGLE_STT_LANG_MAP.get(lang, "en-US")
-        logger.info(f"🎤 STT: Google Chirp2 | language={lang_code}")
-        return google.STT(
-            languages=[lang_code],
-            credentials_info=creds,
-            model="chirp_2",
-            spoken_punctuation=False,
-        )
+    return elevenlabs.STT(
+        model_id="scribe_v2_realtime",
+        api_key=ELEVEN_API_KEY,
+    )
 
 
-def get_google_tts(native_lang: str | None):
+def get_elevenlabs_tts(native_lang: str | None):
     """
-    Google Chirp3-HD voices — native accent per language.
-    Only Chirp3-HD supports streaming in LiveKit.
+    ElevenLabs Flash v2.5 TTS.
+    75ms latency — best for real-time voice agents.
+    Supports 32 languages with natural accents and code-switching.
     """
-    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
-    creds = json.loads(creds_json) if creds_json else None
+    lang_code = ELEVEN_LANG_MAP.get(native_lang or "", "en")
+    logger.info(f"🎙️ TTS: ElevenLabs Flash v2.5 | voice={VOICE_ID} | lang={lang_code}")
 
-    voice_map = {
-        "hi": ("hi-IN-Chirp3-HD-Aoede",  "hi-IN"),
-        "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),
-        "ta": ("ta-IN-Chirp3-HD-Aoede",  "ta-IN"),
-        "te": ("te-IN-Chirp3-HD-Aoede",  "te-IN"),
-        "bn": ("bn-IN-Chirp3-HD-Aoede",  "bn-IN"),
-        "mr": ("mr-IN-Chirp3-HD-Aoede",  "mr-IN"),
-        "gu": ("gu-IN-Chirp3-HD-Aoede",  "gu-IN"),
-        "kn": ("kn-IN-Chirp3-HD-Aoede",  "kn-IN"),
-        "ml": ("ml-IN-Chirp3-HD-Aoede",  "ml-IN"),
-        "pa": ("pa-IN-Chirp3-HD-Aoede",  "pa-IN"),
-        "ur": ("ur-IN-Chirp3-HD-Aoede",  "ur-IN"),
-        "id": ("id-ID-Chirp3-HD-Aoede",  "id-ID"),
-        "ms": ("ms-MY-Chirp3-HD-Aoede",  "ms-MY"),
-        "ko": ("ko-KR-Chirp3-HD-Aoede",  "ko-KR"),
-        "ja": ("ja-JP-Chirp3-HD-Aoede",  "ja-JP"),
-        "ar": ("ar-XA-Chirp3-HD-Aoede",  "ar-XA"),
-        "es": ("es-ES-Chirp3-HD-Aoede",  "es-ES"),
-        "fr": ("fr-FR-Chirp3-HD-Aoede",  "fr-FR"),
-        "de": ("de-DE-Chirp3-HD-Aoede",  "de-DE"),
-        "pt": ("pt-BR-Chirp3-HD-Aoede",  "pt-BR"),
-        "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),
-        "vi": ("vi-VN-Chirp3-HD-Aoede",  "vi-VN"),
-        "en": ("en-US-Chirp3-HD-Aoede",  "en-US"),
-    }
-
-    voice_name, language = voice_map.get(native_lang or "", ("en-US-Chirp3-HD-Aoede", "en-US"))
-    logger.info(f"🎙️ TTS voice: {voice_name} | language: {language}")
-
-    try:
-        return google.TTS(
-            voice_name=voice_name,
-            language=language,
-            gender="female",
-            credentials_info=creds,
-        )
-    except Exception as e:
-        logger.warning(f"⚠️ Voice {voice_name} failed ({e}) — fallback to en-US")
-        return google.TTS(
-            voice_name="en-US-Chirp3-HD-Aoede",
-            language="en-US",
-            gender="female",
-            credentials_info=creds,
-        )
+    return elevenlabs.TTS(
+        model_id="eleven_flash_v2_5",
+        voice_id=VOICE_ID,
+        api_key=ELEVEN_API_KEY,
+        language=lang_code,
+    )
 
 
 async def analyze_with_gpt(transcript: list, duration: int) -> dict:
@@ -219,22 +163,23 @@ def build_instructions(topic, native_lang_code):
 You are an English tutor. The user speaks {lang_name} and wants to learn English.
 
 YOUR PERSONA:
-- You are Julian — a warm, fun, patient English tutor who is fluent in both English and {lang_name}.
+- You are Julian — a warm, fun, patient English tutor fluent in both English and {lang_name}.
 - You speak PRIMARILY in English.
-- You use {lang_name} ONLY when giving explanations, corrections, or encouragement — like a real bilingual tutor would.
-- Think of yourself as a friendly tutor who switches to {lang_name} to make things clear, then brings the student back to English.
+- You use {lang_name} ONLY when giving explanations, corrections, or encouragement.
+- Think of yourself as a friendly bilingual tutor who switches to {lang_name} to make things clear, then brings the student back to English.
 
 CONVERSATION FLOW:
+
 WHEN USER SPEAKS IN {lang_name}:
 - Step 1: Respond warmly in English acknowledging what they said.
-- Step 2: Switch to {lang_name} to explain how to say it in English. Example: "Hindi mein: 'main theek hoon' — English mein isko bolte hain: 'I am doing fine'."
+- Step 2: Switch to {lang_name} to explain how to say it in English.
 - Step 3: Ask them to repeat it in English. Stay encouraging.
-- Step 4: When they repeat it, praise them in English with a small {lang_name} warmth word, then continue the conversation in English.
+- Step 4: When they repeat, praise them with a small {lang_name} warmth word, then continue in English.
 
 WHEN USER SPEAKS IN ENGLISH:
 - Respond in English naturally.
 - If they make a grammar mistake, gently use the correct form in your reply without pointing it out directly.
-- Give a small {lang_name} encouragement word like "Bilkul sahi!", "Shabash!", "Kamusta, magaling!" to celebrate.
+- Give a small {lang_name} encouragement like "Bilkul sahi!", "Shabash!", "Magaling!" to celebrate.
 - Ask a follow-up question to keep them speaking English.
 
 WHEN EXPLAINING GRAMMAR OR VOCABULARY:
@@ -244,17 +189,17 @@ WHEN EXPLAINING GRAMMAR OR VOCABULARY:
 
 EXAMPLES (Hindi):
 User: "main theek hoon"
-Julian: "Oh great! Suniye — Hindi mein aapne kaha 'main theek hoon', English mein isko bolte hain: 'I am doing fine'. Ab aap try karein — 'I am doing fine' bolein!"
+Julian: "Oh great! Suniye — Hindi mein aapne kaha 'main theek hoon', English mein isko bolte hain: 'I am doing fine'. Ab aap try karein!"
 
 User: "I am doing fine"
 Julian: "Shabash yaar! Perfect! So tell me, have you travelled anywhere recently?"
 
 User: "I goes to market yesterday"
-Julian: "Nice try! Acha, thoda correction — 'I went to market yesterday' bolte hain, 'goes' nahi. Ab dobara bolein!"
+Julian: "Nice try! Thoda correction — 'I went to market yesterday' bolte hain. Ab dobara bolein!"
 
 EXAMPLES (Filipino):
 User: "kumain na ako"
-Julian: "Oh nice! Sa Filipino sinabi mo 'kumain na ako' — in English that's 'I already ate'. Now you try saying: I already ate!"
+Julian: "Oh nice! Sa Filipino 'kumain na ako' — in English: 'I already ate'. Now you try!"
 
 User: "I already ate"
 Julian: "Magaling! Perfect! So what did you eat? Tell me in English!"
@@ -262,9 +207,9 @@ Julian: "Magaling! Perfect! So what did you eat? Tell me in English!"
 RULES:
 - Keep each response SHORT — 2 to 3 sentences max.
 - Always end with either a retry request OR a follow-up question in English.
-- Use {lang_name} for explanations and encouragement ONLY — never for full conversations.
+- Use {lang_name} for explanations and encouragement ONLY.
 - ONLY speak the actual words. No stage directions, no labels, no brackets.
-- Never be preachy or lecture. Keep it fun like a friendly tutor session.
+- Never be preachy. Keep it fun like a friendly tutor session.
 """
         logger.info(f"Language mode: TUTOR ({lang_name} explanations → English practice)")
     else:
@@ -304,7 +249,7 @@ class JulianAgent(Agent):
                 f"(e.g. Namaste / Kamusta / Hola), then switch to English immediately. "
                 f"In English, tell them today you'll practice English together"
                 f"{f' about {self._topic}' if self._topic else ''}. "
-                f"Then ask how they are doing — in English. "
+                f"Ask how they are doing in English. "
                 f"Keep it natural, warm, 2 sentences max. "
                 f"Speak ONLY the words — no labels, no brackets."
             )
@@ -398,11 +343,11 @@ async def entrypoint(ctx: JobContext):
     ctx.room.off("participant_connected", on_participant_connected)
     logger.info(f"[entrypoint] Starting session | lang={native_lang!r} | topic={topic!r}")
 
-    # ── Session ───────────────────────────────────────────────────────────────
+    # ── Session — ElevenLabs STT + TTS ────────────────────────────────────────
     session = AgentSession(
-        stt=get_stt(native_lang),
+        stt=get_elevenlabs_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_google_tts(native_lang),
+        tts=get_elevenlabs_tts(native_lang),
         vad=ctx.proc.userdata["vad"],
         allow_interruptions=True,
         min_endpointing_delay=0.3,
@@ -430,7 +375,6 @@ async def entrypoint(ctx: JobContext):
             logger.error(f"Error in on_item_added: {e}")
 
     async def _silence_prompt_loop():
-        """Encourage user if silent for too long."""
         while True:
             await asyncio.sleep(8)
             try:
@@ -442,37 +386,17 @@ async def entrypoint(ctx: JobContext):
                 last_time = datetime.fromisoformat(last["time"])
                 silence   = (datetime.utcnow() - last_time).total_seconds()
                 if silence >= 20:
-                    logger.info(f"Silence {silence:.0f}s — prompting user")
+                    logger.info(f"Silence {silence:.0f}s — prompting")
                     await session.generate_reply(
                         instructions=(
                             "The user has been quiet. "
-                            "Warmly encourage them to try saying the English phrase. "
-                            "Use their native language to encourage them if needed. "
+                            "Warmly encourage them in their native language to try saying the English phrase. "
                             "Keep it to 1 short friendly sentence only."
                         ),
                         allow_interruptions=True,
                     )
             except Exception as e:
                 logger.warning(f"Silence loop error: {e}")
-
-    async def _google_stt_restart_loop():
-        """
-        Google STT silently drops stream after ~5 mins.
-        Restart every 4 mins for Google STT users to prevent dropout.
-        """
-        if native_lang in DEEPGRAM_SUPPORTED:
-            logger.info("🎤 Deepgram STT — no restart needed")
-            return
-
-        while True:
-            await asyncio.sleep(4 * 60)  # restart every 4 minutes
-            try:
-                logger.info("🔄 Restarting Google STT stream (pre-empting 5min dropout)...")
-                new_stt = get_stt(native_lang)
-                await session.update_options(stt=new_stt)
-                logger.info("✅ Google STT stream restarted")
-            except Exception as e:
-                logger.warning(f"STT restart failed: {e}")
 
     async def _save_utterance(uid, room_name, entry):
         try:
@@ -528,21 +452,14 @@ async def entrypoint(ctx: JobContext):
         room=ctx.room,
     )
 
-    silence_task     = asyncio.create_task(_silence_prompt_loop())
-    stt_restart_task = asyncio.create_task(_google_stt_restart_loop())
-
+    silence_task = asyncio.create_task(_silence_prompt_loop())
     disconnect_event = asyncio.Event()
     ctx.room.on("disconnected", lambda: disconnect_event.set())
     await disconnect_event.wait()
 
     silence_task.cancel()
-    stt_restart_task.cancel()
     try:
         await silence_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await stt_restart_task
     except asyncio.CancelledError:
         pass
 

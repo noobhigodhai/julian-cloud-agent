@@ -1,2 +1,3 @@
 livekit-agents[openai,deepgram,silero]
 openai
+livekit-plugins-elevenlabs
