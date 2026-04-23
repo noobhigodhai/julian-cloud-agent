@@ -5,7 +5,7 @@ import httpx
 import asyncio
 from datetime import datetime
 from openai import AsyncOpenAI
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli, inference
+from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, elevenlabs
 
@@ -17,14 +17,17 @@ logging.basicConfig(
 logger = logging.getLogger("julian-cloud-agent")
 logger.setLevel(logging.DEBUG)
 
-BACKEND_URL      = os.environ.get("BACKEND_URL", "https://specker.ai")
-OPENAI_API_KEY   = os.environ.get("OPENAI_API_KEY")
-ELEVEN_API_KEY   = os.environ.get("ELEVEN_API_KEY")
+BACKEND_URL    = os.environ.get("BACKEND_URL", "https://specker.ai")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+ELEVEN_API_KEY = os.environ.get("ELEVEN_API_KEY")
 
 logger.info("=== Julian Cloud Agent starting ===")
-logger.info(f"BACKEND_URL     : {BACKEND_URL}")
-logger.info(f"OPENAI_API_KEY  : {'set' if OPENAI_API_KEY else 'MISSING'}")
-logger.info(f"ELEVEN_API_KEY  : {'set' if ELEVEN_API_KEY else 'MISSING'}")
+logger.info(f"BACKEND_URL    : {BACKEND_URL}")
+logger.info(f"OPENAI_API_KEY : {'set' if OPENAI_API_KEY else 'MISSING'}")
+logger.info(f"ELEVEN_API_KEY : {'set' if ELEVEN_API_KEY else 'MISSING'}")
+
+# ── Voice ID ──────────────────────────────────────────────────────────────────
+VOICE_ID = "Ms9OTvWb99V6DwRHZn6q"
 
 LANGUAGE_NAMES = {
     "tl": "Filipino/Tagalog", "hi": "Hindi",     "bn": "Bengali",
@@ -38,50 +41,41 @@ LANGUAGE_NAMES = {
     "en": "English",
 }
 
-# ElevenLabs STT language codes
 ELEVEN_LANG_MAP = {
-    "hi": "hi",   "tl": "fil",  "ta": "ta",
-    "te": "te",   "bn": "bn",   "mr": "mr",
-    "gu": "gu",   "kn": "kn",   "ml": "ml",
-    "pa": "pa",   "ur": "ur",   "id": "id",
-    "ms": "ms",   "ko": "ko",   "ja": "ja",
-    "ar": "ar",   "es": "es",   "fr": "fr",
-    "de": "de",   "pt": "pt",   "zh": "zh",
-    "vi": "vi",   "en": "en",
+    "hi": "hi",  "tl": "fil", "ta": "ta",
+    "te": "te",  "bn": "bn",  "mr": "mr",
+    "gu": "gu",  "kn": "kn",  "ml": "ml",
+    "pa": "pa",  "ur": "ur",  "id": "id",
+    "ms": "ms",  "ko": "ko",  "ja": "ja",
+    "ar": "ar",  "es": "es",  "fr": "fr",
+    "de": "de",  "pt": "pt",  "zh": "zh",
+    "vi": "vi",  "en": "en",
 }
-
-# ── Voice IDs — warm female voices from ElevenLabs voice library ──────────────
-# These are default ElevenLabs voices that work well for multilingual tutoring.
-# You can replace VOICE_ID with any voice from elevenlabs.io/voice-library
-VOICE_ID = "cgSgspJ2msm6clMCkdW9"  # Jessica — warm, friendly, clear
 
 
 def get_elevenlabs_stt(native_lang: str | None):
     """
     ElevenLabs Scribe v2 Realtime STT.
-    Supports 90+ languages including all Indian languages, Filipino etc.
-    No stream dropout. 150ms latency.
+    90+ languages, no dropout, 150ms latency.
     """
     lang_code = ELEVEN_LANG_MAP.get(native_lang or "", "en")
     logger.info(f"🎤 STT: ElevenLabs Scribe v2 Realtime | language={lang_code}")
-
     return elevenlabs.STT(
-        model_id="scribe_v2_realtime",
+        model="scribe_v2_realtime",
         api_key=ELEVEN_API_KEY,
+        language=lang_code,
     )
 
 
 def get_elevenlabs_tts(native_lang: str | None):
     """
     ElevenLabs Flash v2.5 TTS.
-    75ms latency — best for real-time voice agents.
-    Supports 32 languages with natural accents and code-switching.
+    75ms latency, 32 languages, best for real-time agents.
     """
     lang_code = ELEVEN_LANG_MAP.get(native_lang or "", "en")
     logger.info(f"🎙️ TTS: ElevenLabs Flash v2.5 | voice={VOICE_ID} | lang={lang_code}")
-
     return elevenlabs.TTS(
-        model_id="eleven_flash_v2_5",
+        model="eleven_flash_v2_5",
         voice_id=VOICE_ID,
         api_key=ELEVEN_API_KEY,
         language=lang_code,
