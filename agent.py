@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 from openai import AsyncOpenAI
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
+from livekit.agents.voice import AgentSession as VoiceSession
 from livekit.plugins import silero
 from livekit.plugins import openai, google
 
@@ -72,6 +73,9 @@ def get_google_stt(native_lang: str | None):
     return google.STT(
         languages=[lang_code],
         credentials_info=creds,
+        model="latest_long",
+        interim_results=True,
+        spoken_punctuation=False,
     )
 
 
@@ -221,9 +225,6 @@ You: "Acha! You love travelling! In English say: I love to travel. Go ahead, giv
 User: "I love to travel"
 You: "Yes! Perfect yaar! So where would you love to travel to?"
 
-User: "kamusta ka"
-You: "Oh you asked how I am! In English that's: How are you? Now you try saying it!"
-
 WHEN USER SPEAKS IN ENGLISH:
 - Celebrate their effort warmly.
 - Gently correct any mistakes by naturally using the correct version in your reply.
@@ -251,9 +252,12 @@ Be friendly and fun — like a supportive bilingual friend.
 
 {lang_line}
 
-LISTENING: Always wait for the user to fully finish before responding.
-Never interrupt. If the user pauses briefly, wait — they may still be thinking.
-If user is quiet for over 20 seconds, gently check in."""
+CRITICAL LISTENING RULES:
+- ALWAYS wait for the user to fully finish speaking before responding.
+- Never interrupt the user mid-sentence.
+- After you finish speaking, immediately go into listening mode.
+- If the user speaks right after you, pick it up immediately.
+- Do NOT wait for silence — respond as soon as they finish their sentence."""
 
 
 class JulianAgent(Agent):
@@ -304,7 +308,7 @@ async def entrypoint(ctx: JobContext):
     topic       = None
     native_lang = None
 
-    # ── Step 1: Read from job dispatch metadata FIRST (available immediately) ──
+    # ── Step 1: Read from job dispatch metadata FIRST ─────────────────────────
     try:
         job_meta = json.loads(ctx.job.metadata or "{}")
         user_email  = job_meta.get("email")
@@ -324,7 +328,6 @@ async def entrypoint(ctx: JobContext):
         logger.debug(f"[participant_meta] raw: {raw_meta}")
         try:
             meta = json.loads(raw_meta)
-            # Only override if values are still missing
             user_email  = meta.get("email")      or user_email
             user_id     = meta.get("userId")     or user_id
             topic       = meta.get("topic")      or topic
@@ -351,7 +354,7 @@ async def entrypoint(ctx: JobContext):
         meta_ready.set()
         break
 
-    # ── Step 5: Wait up to 15s for participant if not already joined ──────────
+    # ── Step 5: Wait up to 15s for participant ────────────────────────────────
     if not meta_ready.is_set():
         logger.info("[entrypoint] Waiting for participant to join...")
         try:
@@ -363,18 +366,30 @@ async def entrypoint(ctx: JobContext):
     ctx.room.off("participant_connected", on_participant_connected)
     logger.info(f"[entrypoint] Starting session | lang={native_lang!r} | topic={topic!r}")
 
-    # ── Session — fully Google STT + TTS ──────────────────────────────────────
+    # ── Session ───────────────────────────────────────────────────────────────
+    stt = get_google_stt(native_lang)
+    tts = get_google_tts(native_lang)
+
+    # Tune VAD for more sensitive listening
+    vad = ctx.proc.userdata["vad"]
+
     session = AgentSession(
-        stt=get_google_stt(native_lang),
+        stt=stt,
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_google_tts(native_lang),
-        vad=ctx.proc.userdata["vad"],
+        tts=tts,
+        vad=vad,
+        # Allow user to interrupt agent at any time
+        allow_interruptions=True,
+        # Minimum silence before treating speech as done — lower = more responsive
+        min_endpointing_delay=0.3,
+        # How long to wait after speech ends before responding
+        max_endpointing_delay=0.8,
     )
 
-    session.on("user_speech_started",    lambda _:  logger.debug("[session] user_speech_started"))
-    session.on("agent_speech_started",   lambda _:  logger.debug("[session] agent_speech_started"))
-    session.on("user_speech_committed",  lambda ev: logger.debug(f"[session] user_speech_committed: {getattr(ev, 'user_transcript', '')!r}"))
-    session.on("agent_speech_committed", lambda ev: logger.debug(f"[session] agent_speech_committed: {getattr(ev, 'agent_transcript', '')!r}"))
+    session.on("user_speech_started",    lambda _:  logger.info("[session] 🎤 user_speech_started"))
+    session.on("agent_speech_started",   lambda _:  logger.info("[session] 🔊 agent_speech_started"))
+    session.on("user_speech_committed",  lambda ev: logger.info(f"[session] ✅ user_speech_committed: {getattr(ev, 'user_transcript', '')!r}"))
+    session.on("agent_speech_committed", lambda ev: logger.info(f"[session] ✅ agent_speech_committed"))
 
     @session.on("conversation_item_added")
     def on_item_added(event):
@@ -395,14 +410,21 @@ async def entrypoint(ctx: JobContext):
         while True:
             await asyncio.sleep(8)
             try:
-                if not transcript or transcript[-1]["role"] != "assistant":
+                if not transcript:
                     continue
-                last_time = datetime.fromisoformat(transcript[-1]["time"])
+                last = transcript[-1]
+                if last["role"] != "assistant":
+                    continue
+                last_time = datetime.fromisoformat(last["time"])
                 silence = (datetime.utcnow() - last_time).total_seconds()
-                if silence >= 25:
+                if silence >= 20:
                     logger.info(f"Silence {silence:.0f}s — prompting")
                     await session.generate_reply(
-                        instructions="User has been quiet. Warmly ask if they're still there with a simple friendly question.",
+                        instructions=(
+                            "The user has been quiet. "
+                            "Warmly encourage them to try saying the English phrase. "
+                            "Keep it to 1 short friendly sentence only."
+                        ),
                         allow_interruptions=True,
                     )
             except Exception as e:
