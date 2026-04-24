@@ -68,12 +68,34 @@ DEEPGRAM_LANG_MAP = {
     "en": "en",
 }
 
+GOOGLE_VOICE_MAP = {
+    "hi": ("hi-IN-Chirp3-HD-Aoede",  "hi-IN"),
+    "ta": ("ta-IN-Chirp3-HD-Aoede",  "ta-IN"),
+    "te": ("te-IN-Chirp3-HD-Aoede",  "te-IN"),
+    "mr": ("mr-IN-Chirp3-HD-Aoede",  "mr-IN"),
+    "kn": ("kn-IN-Chirp3-HD-Aoede",  "kn-IN"),
+    "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),
+    "bn": ("bn-IN-Chirp3-HD-Aoede",  "bn-IN"),
+    "es": ("es-ES-Chirp3-HD-Aoede",  "es-ES"),
+    "fr": ("fr-FR-Chirp3-HD-Aoede",  "fr-FR"),
+    "de": ("de-DE-Chirp3-HD-Aoede",  "de-DE"),
+    "pt": ("pt-BR-Chirp3-HD-Aoede",  "pt-BR"),
+    "ja": ("ja-JP-Chirp3-HD-Aoede",  "ja-JP"),
+    "ko": ("ko-KR-Chirp3-HD-Aoede",  "ko-KR"),
+    "ar": ("ar-XA-Chirp3-HD-Aoede",  "ar-XA"),
+    "id": ("id-ID-Chirp3-HD-Aoede",  "id-ID"),
+    "ms": ("ms-MY-Chirp3-HD-Aoede",  "ms-MY"),
+    "vi": ("vi-VN-Chirp3-HD-Aoede",  "vi-VN"),
+    "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),
+    "tr": ("tr-TR-Chirp3-HD-Aoede",  "tr-TR"),
+    "ru": ("ru-RU-Chirp3-HD-Aoede",  "ru-RU"),
+    "it": ("it-IT-Chirp3-HD-Aoede",  "it-IT"),
+    "nl": ("nl-NL-Chirp3-HD-Aoede",  "nl-NL"),
+    "en": ("en-US-Chirp3-HD-Aoede",  "en-US"),
+}
+
 
 def get_deepgram_stt(native_lang: str | None):
-    """
-    Deepgram Nova-3 STT — stable long sessions, no dropout, 50+ languages.
-    Mumbai colocation for Hindi gives lower latency.
-    """
     lang_code = DEEPGRAM_LANG_MAP.get(native_lang or "", "en")
     logger.info(f"🎤 STT: Deepgram Nova-3 | language={lang_code}")
     return deepgram.STT(
@@ -83,40 +105,12 @@ def get_deepgram_stt(native_lang: str | None):
 
 
 def get_google_tts(native_lang: str | None):
-    """
-    Google Chirp3-HD TTS — native accent per language.
-    hi-IN = proper Hindi accent, tl = Filipino etc.
-    """
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
 
-    voice_map = {
-        "hi": ("hi-IN-Chirp3-HD-Aoede",  "hi-IN"),
-        "ta": ("ta-IN-Chirp3-HD-Aoede",  "ta-IN"),
-        "te": ("te-IN-Chirp3-HD-Aoede",  "te-IN"),
-        "mr": ("mr-IN-Chirp3-HD-Aoede",  "mr-IN"),
-        "kn": ("kn-IN-Chirp3-HD-Aoede",  "kn-IN"),
-        "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),
-        "bn": ("bn-IN-Chirp3-HD-Aoede",  "bn-IN"),
-        "es": ("es-ES-Chirp3-HD-Aoede",  "es-ES"),
-        "fr": ("fr-FR-Chirp3-HD-Aoede",  "fr-FR"),
-        "de": ("de-DE-Chirp3-HD-Aoede",  "de-DE"),
-        "pt": ("pt-BR-Chirp3-HD-Aoede",  "pt-BR"),
-        "ja": ("ja-JP-Chirp3-HD-Aoede",  "ja-JP"),
-        "ko": ("ko-KR-Chirp3-HD-Aoede",  "ko-KR"),
-        "ar": ("ar-XA-Chirp3-HD-Aoede",  "ar-XA"),
-        "id": ("id-ID-Chirp3-HD-Aoede",  "id-ID"),
-        "ms": ("ms-MY-Chirp3-HD-Aoede",  "ms-MY"),
-        "vi": ("vi-VN-Chirp3-HD-Aoede",  "vi-VN"),
-        "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),
-        "tr": ("tr-TR-Chirp3-HD-Aoede",  "tr-TR"),
-        "ru": ("ru-RU-Chirp3-HD-Aoede",  "ru-RU"),
-        "it": ("it-IT-Chirp3-HD-Aoede",  "it-IT"),
-        "nl": ("nl-NL-Chirp3-HD-Aoede",  "nl-NL"),
-        "en": ("en-US-Chirp3-HD-Aoede",  "en-US"),
-    }
-
-    voice_name, language = voice_map.get(native_lang or "", ("en-US-Chirp3-HD-Aoede", "en-US"))
+    voice_name, language = GOOGLE_VOICE_MAP.get(
+        native_lang or "", ("en-US-Chirp3-HD-Aoede", "en-US")
+    )
     logger.info(f"🎙️ TTS: Google Chirp3-HD | voice={voice_name} | lang={language}")
 
     try:
@@ -127,7 +121,7 @@ def get_google_tts(native_lang: str | None):
             credentials_info=creds,
         )
     except Exception as e:
-        logger.warning(f"⚠️ TTS failed ({e}) — fallback en-US")
+        logger.warning(f"Google TTS failed ({e}) — fallback to en-US")
         return google.TTS(
             voice_name="en-US-Chirp3-HD-Aoede",
             language="en-US",
@@ -247,7 +241,6 @@ async def entrypoint(ctx: JobContext):
     topic       = None
     native_lang = None
 
-    # ── Step 1: Read from job dispatch metadata FIRST ─────────────────────────
     try:
         job_meta    = json.loads(ctx.job.metadata or "{}")
         user_email  = job_meta.get("email")
@@ -300,7 +293,7 @@ async def entrypoint(ctx: JobContext):
     ctx.room.off("participant_connected", on_participant_connected)
     logger.info(f"[entrypoint] Starting session | lang={native_lang!r} | topic={topic!r}")
 
-    # ── Session — Deepgram Nova-3 STT + Google Chirp3-HD TTS ──────────────────
+    # ── Deepgram STT + Google TTS ─────────────────────────────────────────────
     session = AgentSession(
         stt=get_deepgram_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
@@ -314,7 +307,7 @@ async def entrypoint(ctx: JobContext):
     session.on("user_speech_started",    lambda _:  logger.info("[session] 🎤 user_speech_started"))
     session.on("agent_speech_started",   lambda _:  logger.info("[session] 🔊 agent_speech_started"))
     session.on("user_speech_committed",  lambda ev: logger.info(f"[session] user said: {getattr(ev, 'user_transcript', '')!r}"))
-    session.on("agent_speech_committed", lambda ev: logger.info(f"[session] agent spoke"))
+    session.on("agent_speech_committed", lambda ev: logger.info("[session] agent spoke"))
 
     @session.on("conversation_item_added")
     def on_item_added(event):
@@ -369,7 +362,6 @@ async def entrypoint(ctx: JobContext):
             return
 
         duration = int((datetime.utcnow() - start_time).total_seconds())
-        logger.info(f"Sending | duration: {duration}s | lines: {len(transcript)}")
 
         payload = {
             "roomName":            ctx.room.name,
