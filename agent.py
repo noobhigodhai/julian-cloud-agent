@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
-from livekit.plugins import openai, deepgram
+from livekit.plugins import openai, deepgram, google
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,6 +18,12 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "https://specker.ai")
 
 LANGUAGE_NAMES = {
     "hi": "Hindi",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "mr": "Marathi",
+    "kn": "Kannada",
+    "tl": "Filipino/Tagalog",
+    "bn": "Bengali",
     "es": "Spanish",
     "fr": "French",
     "de": "German",
@@ -26,13 +32,9 @@ LANGUAGE_NAMES = {
     "ko": "Korean",
     "ar": "Arabic",
     "id": "Indonesian/Bahasa",
+    "ms": "Malay",
     "vi": "Vietnamese",
     "zh": "Mandarin Chinese",
-    "ta": "Tamil",
-    "te": "Telugu",
-    "mr": "Marathi",
-    "tl": "Filipino/Tagalog",
-    "bn": "Bengali",
     "tr": "Turkish",
     "ru": "Russian",
     "it": "Italian",
@@ -40,9 +42,14 @@ LANGUAGE_NAMES = {
     "en": "English",
 }
 
-# Deepgram Nova-3 language codes
 DEEPGRAM_LANG_MAP = {
     "hi": "hi",
+    "ta": "ta",
+    "te": "te",
+    "mr": "mr",
+    "kn": "kn",
+    "tl": "tl",
+    "bn": "bn",
     "es": "es",
     "fr": "fr",
     "de": "de",
@@ -51,13 +58,9 @@ DEEPGRAM_LANG_MAP = {
     "ko": "ko",
     "ar": "ar",
     "id": "id",
+    "ms": "ms",
     "vi": "vi",
     "zh": "zh",
-    "ta": "ta",
-    "te": "te",
-    "mr": "mr",
-    "tl": "tl",
-    "bn": "bn",
     "tr": "tr",
     "ru": "ru",
     "it": "it",
@@ -68,8 +71,8 @@ DEEPGRAM_LANG_MAP = {
 
 def get_deepgram_stt(native_lang: str | None):
     """
-    Deepgram Nova-3 STT — supports Tamil, Telugu, Marathi, Filipino + more.
-    Mumbai colocation for Hindi gives lower latency for Indian users.
+    Deepgram Nova-3 STT — stable long sessions, no dropout, 50+ languages.
+    Mumbai colocation for Hindi gives lower latency.
     """
     lang_code = DEEPGRAM_LANG_MAP.get(native_lang or "", "en")
     logger.info(f"🎤 STT: Deepgram Nova-3 | language={lang_code}")
@@ -79,13 +82,58 @@ def get_deepgram_stt(native_lang: str | None):
     )
 
 
-def get_deepgram_tts(native_lang: str | None):
+def get_google_tts(native_lang: str | None):
     """
-    Deepgram Aura TTS — fast, natural voice.
-    English voice works best for code-switching.
+    Google Chirp3-HD TTS — native accent per language.
+    hi-IN = proper Hindi accent, tl = Filipino etc.
     """
-    logger.info(f"🎙️ TTS: Deepgram Aura-2 Thalia")
-    return deepgram.TTS(model="aura-2-thalia-en")
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+    creds = json.loads(creds_json) if creds_json else None
+
+    voice_map = {
+        "hi": ("hi-IN-Chirp3-HD-Aoede",  "hi-IN"),
+        "ta": ("ta-IN-Chirp3-HD-Aoede",  "ta-IN"),
+        "te": ("te-IN-Chirp3-HD-Aoede",  "te-IN"),
+        "mr": ("mr-IN-Chirp3-HD-Aoede",  "mr-IN"),
+        "kn": ("kn-IN-Chirp3-HD-Aoede",  "kn-IN"),
+        "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),
+        "bn": ("bn-IN-Chirp3-HD-Aoede",  "bn-IN"),
+        "es": ("es-ES-Chirp3-HD-Aoede",  "es-ES"),
+        "fr": ("fr-FR-Chirp3-HD-Aoede",  "fr-FR"),
+        "de": ("de-DE-Chirp3-HD-Aoede",  "de-DE"),
+        "pt": ("pt-BR-Chirp3-HD-Aoede",  "pt-BR"),
+        "ja": ("ja-JP-Chirp3-HD-Aoede",  "ja-JP"),
+        "ko": ("ko-KR-Chirp3-HD-Aoede",  "ko-KR"),
+        "ar": ("ar-XA-Chirp3-HD-Aoede",  "ar-XA"),
+        "id": ("id-ID-Chirp3-HD-Aoede",  "id-ID"),
+        "ms": ("ms-MY-Chirp3-HD-Aoede",  "ms-MY"),
+        "vi": ("vi-VN-Chirp3-HD-Aoede",  "vi-VN"),
+        "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),
+        "tr": ("tr-TR-Chirp3-HD-Aoede",  "tr-TR"),
+        "ru": ("ru-RU-Chirp3-HD-Aoede",  "ru-RU"),
+        "it": ("it-IT-Chirp3-HD-Aoede",  "it-IT"),
+        "nl": ("nl-NL-Chirp3-HD-Aoede",  "nl-NL"),
+        "en": ("en-US-Chirp3-HD-Aoede",  "en-US"),
+    }
+
+    voice_name, language = voice_map.get(native_lang or "", ("en-US-Chirp3-HD-Aoede", "en-US"))
+    logger.info(f"🎙️ TTS: Google Chirp3-HD | voice={voice_name} | lang={language}")
+
+    try:
+        return google.TTS(
+            voice_name=voice_name,
+            language=language,
+            gender="female",
+            credentials_info=creds,
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ TTS failed ({e}) — fallback en-US")
+        return google.TTS(
+            voice_name="en-US-Chirp3-HD-Aoede",
+            language="en-US",
+            gender="female",
+            credentials_info=creds,
+        )
 
 
 def build_instructions(topic, native_lang_code):
@@ -227,7 +275,6 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.error(f"Participant metadata parse error: {e}")
 
-    # ── Step 2: Register listener BEFORE connecting ───────────────────────────
     meta_ready = asyncio.Event()
 
     def on_participant_connected(participant):
@@ -235,17 +282,13 @@ async def entrypoint(ctx: JobContext):
         meta_ready.set()
 
     ctx.room.on("participant_connected", on_participant_connected)
-
-    # ── Step 3: Connect ───────────────────────────────────────────────────────
     await ctx.connect()
 
-    # ── Step 4: Check if participant already in room ──────────────────────────
     for p in ctx.room.remote_participants.values():
         _parse_meta(p)
         meta_ready.set()
         break
 
-    # ── Step 5: Wait up to 15s ────────────────────────────────────────────────
     if not meta_ready.is_set():
         logger.info("[entrypoint] Waiting for participant...")
         try:
@@ -257,11 +300,11 @@ async def entrypoint(ctx: JobContext):
     ctx.room.off("participant_connected", on_participant_connected)
     logger.info(f"[entrypoint] Starting session | lang={native_lang!r} | topic={topic!r}")
 
-    # ── Session — Deepgram Nova-3 STT + Deepgram TTS ──────────────────────────
+    # ── Session — Deepgram Nova-3 STT + Google Chirp3-HD TTS ──────────────────
     session = AgentSession(
         stt=get_deepgram_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_deepgram_tts(native_lang),
+        tts=get_google_tts(native_lang),
         vad=ctx.proc.userdata["vad"],
         allow_interruptions=True,
         min_endpointing_delay=0.3,
