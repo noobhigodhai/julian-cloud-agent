@@ -11,7 +11,6 @@ def _now() -> datetime:
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram, google
-from livekit.rtc import Transcription, TranscriptionSegment
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,29 +47,11 @@ LANGUAGE_NAMES = {
 }
 
 DEEPGRAM_LANG_MAP = {
-    "hi": "hi",
-    "ta": "ta",
-    "te": "te",
-    "mr": "mr",
-    "kn": "kn",
-    "tl": "tl",
-    "bn": "bn",
-    "es": "es",
-    "fr": "fr",
-    "de": "de",
-    "pt": "pt",
-    "ja": "ja",
-    "ko": "ko",
-    "ar": "ar",
-    "id": "id",
-    "ms": "ms",
-    "vi": "vi",
-    "zh": "zh",
-    "tr": "tr",
-    "ru": "ru",
-    "it": "it",
-    "nl": "nl",
-    "en": "en",
+    "hi": "hi", "ta": "ta", "te": "te", "mr": "mr", "kn": "kn",
+    "tl": "tl", "bn": "bn", "es": "es", "fr": "fr", "de": "de",
+    "pt": "pt", "ja": "ja", "ko": "ko", "ar": "ar", "id": "id",
+    "ms": "ms", "vi": "vi", "zh": "zh", "tr": "tr", "ru": "ru",
+    "it": "it", "nl": "nl", "en": "en",
 }
 
 GOOGLE_VOICE_MAP = {
@@ -103,41 +84,25 @@ GOOGLE_VOICE_MAP = {
 def get_deepgram_stt(native_lang: str | None):
     lang_code = DEEPGRAM_LANG_MAP.get(native_lang or "", "en")
     logger.info(f"🎤 STT: Deepgram Nova-3 | language={lang_code}")
-    return deepgram.STT(
-        model="nova-3",
-        language=lang_code,
-    )
+    return deepgram.STT(model="nova-3", language=lang_code)
 
 
 def get_google_tts(native_lang: str | None):
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     creds = json.loads(creds_json) if creds_json else None
-
     voice_name, language = GOOGLE_VOICE_MAP.get(
         native_lang or "", ("en-US-Chirp3-HD-Aoede", "en-US")
     )
     logger.info(f"🎙️ TTS: Google Chirp3-HD | voice={voice_name} | lang={language}")
-
     try:
-        return google.TTS(
-            voice_name=voice_name,
-            language=language,
-            gender="female",
-            credentials_info=creds,
-        )
+        return google.TTS(voice_name=voice_name, language=language, gender="female", credentials_info=creds)
     except Exception as e:
         logger.warning(f"Google TTS failed ({e}) — fallback to en-US")
-        return google.TTS(
-            voice_name="en-US-Chirp3-HD-Aoede",
-            language="en-US",
-            gender="female",
-            credentials_info=creds,
-        )
+        return google.TTS(voice_name="en-US-Chirp3-HD-Aoede", language="en-US", gender="female", credentials_info=creds)
 
 
 def build_instructions(topic, native_lang_code):
     lang_name = LANGUAGE_NAMES.get(native_lang_code or "", None)
-    logger.debug(f"build_instructions | lang_code={native_lang_code!r} -> lang_name={lang_name!r} | topic={topic!r}")
 
     topic_line = (
         f"Today's conversation topic is: {topic}. Keep the conversation around this topic."
@@ -223,10 +188,7 @@ class JulianAgent(Agent):
             )
 
         logger.info(f"[on_enter] greeting: {greeting}")
-        await self.session.generate_reply(
-            instructions=greeting,
-            allow_interruptions=True,
-        )
+        await self.session.generate_reply(instructions=greeting, allow_interruptions=True)
 
 
 server = AgentServer()
@@ -262,7 +224,6 @@ async def entrypoint(ctx: JobContext):
         nonlocal participant_identity, user_email, user_id, topic, native_lang
         participant_identity = participant.identity
         raw_meta = participant.metadata or "{}"
-        logger.debug(f"[participant_meta] raw: {raw_meta}")
         try:
             meta        = json.loads(raw_meta)
             user_email  = meta.get("email")      or user_email
@@ -291,7 +252,6 @@ async def entrypoint(ctx: JobContext):
         logger.info("[entrypoint] Waiting for participant...")
         try:
             await asyncio.wait_for(meta_ready.wait(), timeout=15.0)
-            logger.info(f"[entrypoint] Participant arrived | nativeLang={native_lang!r}")
         except asyncio.TimeoutError:
             logger.warning("[entrypoint] Timed out — using job metadata")
 
@@ -313,7 +273,24 @@ async def entrypoint(ctx: JobContext):
     session.on("user_speech_committed",  lambda ev: logger.info(f"[session] user said: {getattr(ev, 'user_transcript', '')!r}"))
     session.on("agent_speech_committed", lambda ev: logger.info("[session] agent spoke"))
 
-    # ─── Transcript collection + manual transcription publish ────────────────
+    # ─── Send transcript to client via Data Channel ──────────────────────────
+    async def _send_data(role: str, text: str):
+        """Publish a JSON transcript message over LiveKit data channel."""
+        try:
+            payload = json.dumps({
+                "type": "transcript",
+                "role": role,
+                "text": text,
+                "time": _now().isoformat(),
+            }).encode("utf-8")
+            await ctx.room.local_participant.publish_data(
+                payload=payload,
+                reliable=True,
+            )
+            logger.info(f"📡 [DATA] Sent {role}: {text[:60]}...")
+        except Exception as e:
+            logger.warning(f"⚠️ [DATA] Send failed: {e}")
+
     @session.on("conversation_item_added")
     def on_item_added(event):
         try:
@@ -325,45 +302,14 @@ async def entrypoint(ctx: JobContext):
                 transcript.append(entry)
                 logger.info(f"{'User' if role == 'user' else 'Julian'}: {text}")
 
-                # ── Publish transcription to room so client can display it ────
-                if role == "assistant":
-                    asyncio.create_task(_publish_transcription(ctx, text))
+                # Send BOTH user and assistant text to client via data channel
+                asyncio.create_task(_send_data(role, text))
 
                 if role == "user" and user_id:
                     asyncio.create_task(_save_utterance(user_id, ctx.room.name, entry))
         except Exception as e:
             logger.error(f"Error in on_item_added: {e}")
 
-    async def _publish_transcription(ctx, text):
-        """Send agent text to all participants via LiveKit transcription."""
-        try:
-            local = ctx.room.local_participant
-            # Find the agent's audio track SID (needed for transcription)
-            track_sid = ""
-            for pub in local.track_publications.values():
-                if pub.track and pub.track.kind == "audio":
-                    track_sid = pub.sid
-                    break
-
-            segment = TranscriptionSegment(
-                id=f"agent-{int(_now().timestamp() * 1000)}",
-                text=text,
-                start_time=0,
-                end_time=0,
-                final=True,
-                language="en",
-            )
-            transcription = Transcription(
-                participant_identity=local.identity,
-                track_sid=track_sid,
-                segments=[segment],
-            )
-            await local.publish_transcription(transcription)
-            logger.info(f"📡 [TRANSCRIPTION] Published: {text[:60]}...")
-        except Exception as e:
-            logger.warning(f"⚠️ [TRANSCRIPTION] Publish failed: {e}")
-
-    # ─── Silence prompt loop ─────────────────────────────────────────────────
     async def _silence_prompt_loop():
         while True:
             await asyncio.sleep(8)
@@ -397,60 +343,41 @@ async def entrypoint(ctx: JobContext):
 
     async def on_shutdown():
         logger.info(f"Shutdown | Lines: {len(transcript)}")
-
         duration = int((_now() - (start_time or _now())).total_seconds())
         logger.info(f"[shutdown] duration={duration}s | userId={user_id}")
 
-        # ── Deduct minutes from user account ─────────────────────────────────
         if user_id:
             url = f"{BACKEND_URL}/api/deduct-minutes"
             logger.info(f"[minutes] POST {url} | userId={user_id} secondsUsed={duration}")
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    res = await client.post(
-                        url,
-                        json={"userId": user_id, "secondsUsed": duration},
-                        headers={"Content-Type": "application/json"},
-                    )
+                    res = await client.post(url, json={"userId": user_id, "secondsUsed": duration}, headers={"Content-Type": "application/json"})
                     logger.info(f"[minutes] HTTP {res.status_code} | body: {res.text[:200]}")
             except Exception as e:
                 logger.error(f"[minutes] request failed: {e}")
         else:
             logger.warning(f"[minutes] SKIPPED — userId={user_id!r} duration={duration}s")
 
-        # ── Send call report ──────────────────────────────────────────────────
         if not transcript:
             logger.warning("No transcript — skipping call report")
             return
 
         payload = {
-            "roomName":            ctx.room.name,
-            "participantIdentity": participant_identity,
-            "userEmail":           user_email,
-            "userId":              user_id,
-            "duration":            duration,
-            "transcript":          transcript,
-            "topic":               topic,
-            "nativeLang":          native_lang,
-            "timestamp":           _now().isoformat(),
+            "roomName": ctx.room.name, "participantIdentity": participant_identity,
+            "userEmail": user_email, "userId": user_id, "duration": duration,
+            "transcript": transcript, "topic": topic, "nativeLang": native_lang,
+            "timestamp": _now().isoformat(),
         }
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                res = await client.post(
-                    f"{BACKEND_URL}/api/call-report",
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
+                res = await client.post(f"{BACKEND_URL}/api/call-report", json=payload, headers={"Content-Type": "application/json"})
                 logger.info(f"✅ Call report sent: {res.status_code}")
         except Exception as e:
             logger.error(f"Failed to send call report: {e}")
 
     start_time = _now()
     logger.info(f"[session] call started at {start_time.isoformat()}")
-    await session.start(
-        agent=JulianAgent(topic=topic, native_lang=native_lang),
-        room=ctx.room,
-    )
+    await session.start(agent=JulianAgent(topic=topic, native_lang=native_lang), room=ctx.room)
 
     silence_task = asyncio.create_task(_silence_prompt_loop())
     disconnect_event = asyncio.Event()
