@@ -365,7 +365,7 @@ async def entrypoint(ctx: JobContext):
 
         # ── Deduct minutes from user account ─────────────────────────────────
         if user_id:
-            url = f"{BACKEND_URL}/deduct-minutes"
+            url = f"{BACKEND_URL}/api/deduct-minutes"
             logger.info(f"[minutes] POST {url} | userId={user_id} secondsUsed={duration}")
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
