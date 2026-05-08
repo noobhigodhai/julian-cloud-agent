@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram, google
+from livekit.rtc import Transcription, TranscriptionSegment
 
 logging.basicConfig(
     level=logging.INFO,
@@ -311,6 +313,7 @@ async def entrypoint(ctx: JobContext):
     session.on("user_speech_committed",  lambda ev: logger.info(f"[session] user said: {getattr(ev, 'user_transcript', '')!r}"))
     session.on("agent_speech_committed", lambda ev: logger.info("[session] agent spoke"))
 
+    # ─── Transcript collection + manual transcription publish ────────────────
     @session.on("conversation_item_added")
     def on_item_added(event):
         try:
@@ -321,11 +324,46 @@ async def entrypoint(ctx: JobContext):
                 entry = {"role": role, "text": text, "time": _now().isoformat()}
                 transcript.append(entry)
                 logger.info(f"{'User' if role == 'user' else 'Julian'}: {text}")
+
+                # ── Publish transcription to room so client can display it ────
+                if role == "assistant":
+                    asyncio.create_task(_publish_transcription(ctx, text))
+
                 if role == "user" and user_id:
                     asyncio.create_task(_save_utterance(user_id, ctx.room.name, entry))
         except Exception as e:
             logger.error(f"Error in on_item_added: {e}")
 
+    async def _publish_transcription(ctx, text):
+        """Send agent text to all participants via LiveKit transcription."""
+        try:
+            local = ctx.room.local_participant
+            # Find the agent's audio track SID (needed for transcription)
+            track_sid = ""
+            for pub in local.track_publications.values():
+                if pub.track and pub.track.kind == "audio":
+                    track_sid = pub.sid
+                    break
+
+            segment = TranscriptionSegment(
+                id=f"agent-{int(_now().timestamp() * 1000)}",
+                text=text,
+                start_time=0,
+                end_time=0,
+                final=True,
+                language="en",
+            )
+            transcription = Transcription(
+                participant_identity=local.identity,
+                track_sid=track_sid,
+                segments=[segment],
+            )
+            await local.publish_transcription(transcription)
+            logger.info(f"📡 [TRANSCRIPTION] Published: {text[:60]}...")
+        except Exception as e:
+            logger.warning(f"⚠️ [TRANSCRIPTION] Publish failed: {e}")
+
+    # ─── Silence prompt loop ─────────────────────────────────────────────────
     async def _silence_prompt_loop():
         while True:
             await asyncio.sleep(8)
@@ -416,7 +454,7 @@ async def entrypoint(ctx: JobContext):
 
     silence_task = asyncio.create_task(_silence_prompt_loop())
     disconnect_event = asyncio.Event()
-    ctx.room.on("disconnected", lambda: disconnect_event.set())
+    ctx.room.on("disconnected", lambda *args: disconnect_event.set())
     await disconnect_event.wait()
 
     silence_task.cancel()
