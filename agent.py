@@ -3,7 +3,10 @@ import os
 import json
 import httpx
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram, google
@@ -234,7 +237,7 @@ server.setup_fnc = prewarm
 @server.rtc_session(agent_name="julian-cloud")
 async def entrypoint(ctx: JobContext):
     transcript           = []
-    start_time           = datetime.utcnow()
+    start_time           = None
     participant_identity = None
     user_email           = None
     user_id              = None
@@ -315,7 +318,7 @@ async def entrypoint(ctx: JobContext):
             role = getattr(item, "role", None)
             text = getattr(item, "text_content", None) or getattr(item, "text", None)
             if role and text:
-                entry = {"role": role, "text": text, "time": datetime.utcnow().isoformat()}
+                entry = {"role": role, "text": text, "time": _now().isoformat()}
                 transcript.append(entry)
                 logger.info(f"{'User' if role == 'user' else 'Julian'}: {text}")
                 if role == "user" and user_id:
@@ -332,8 +335,8 @@ async def entrypoint(ctx: JobContext):
                 last = transcript[-1]
                 if last["role"] != "assistant":
                     continue
-                last_time = datetime.fromisoformat(last["time"])
-                silence   = (datetime.utcnow() - last_time).total_seconds()
+                last_time = datetime.fromisoformat(last["time"]).replace(tzinfo=timezone.utc)
+                silence   = (_now() - last_time).total_seconds()
                 if silence >= 20:
                     logger.info(f"Silence {silence:.0f}s — prompting")
                     await session.generate_reply(
@@ -357,7 +360,7 @@ async def entrypoint(ctx: JobContext):
     async def on_shutdown():
         logger.info(f"Shutdown | Lines: {len(transcript)}")
 
-        duration = int((datetime.utcnow() - start_time).total_seconds())
+        duration = int((_now() - (start_time or _now())).total_seconds())
         logger.info(f"[shutdown] duration={duration}s | userId={user_id}")
 
         # ── Deduct minutes from user account ─────────────────────────────────
@@ -391,7 +394,7 @@ async def entrypoint(ctx: JobContext):
             "transcript":          transcript,
             "topic":               topic,
             "nativeLang":          native_lang,
-            "timestamp":           datetime.utcnow().isoformat(),
+            "timestamp":           _now().isoformat(),
         }
         try:
             async with httpx.AsyncClient(timeout=15) as client:
@@ -404,6 +407,8 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.error(f"Failed to send call report: {e}")
 
+    start_time = _now()
+    logger.info(f"[session] call started at {start_time.isoformat()}")
     await session.start(
         agent=JulianAgent(topic=topic, native_lang=native_lang),
         room=ctx.room,
