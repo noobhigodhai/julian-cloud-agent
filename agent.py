@@ -233,13 +233,13 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name="julian-cloud")
 async def entrypoint(ctx: JobContext):
-    transcript  = []
-    start_time  = datetime.utcnow()
+    transcript           = []
+    start_time           = datetime.utcnow()
     participant_identity = None
-    user_email  = None
-    user_id     = None
-    topic       = None
-    native_lang = None
+    user_email           = None
+    user_id              = None
+    topic                = None
+    native_lang          = None
 
     try:
         job_meta    = json.loads(ctx.job.metadata or "{}")
@@ -293,7 +293,6 @@ async def entrypoint(ctx: JobContext):
     ctx.room.off("participant_connected", on_participant_connected)
     logger.info(f"[entrypoint] Starting session | lang={native_lang!r} | topic={topic!r}")
 
-    # ── Deepgram STT + Google TTS ─────────────────────────────────────────────
     session = AgentSession(
         stt=get_deepgram_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
@@ -357,11 +356,27 @@ async def entrypoint(ctx: JobContext):
 
     async def on_shutdown():
         logger.info(f"Shutdown | Lines: {len(transcript)}")
-        if not transcript:
-            logger.warning("No transcript — skipping")
-            return
 
         duration = int((datetime.utcnow() - start_time).total_seconds())
+        logger.info(f"[shutdown] duration={duration}s | userId={user_id}")
+
+        # ── Deduct minutes from user account ─────────────────────────────────
+        if user_id and duration > 0:
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    res = await client.post(
+                        f"{BACKEND_URL}/deduct-minutes",
+                        json={"userId": user_id, "secondsUsed": duration},
+                        headers={"Content-Type": "application/json"},
+                    )
+                    logger.info(f"[minutes] deducted {duration}s for user {user_id} → HTTP {res.status_code}")
+            except Exception as e:
+                logger.warning(f"[minutes] deduct request failed: {e}")
+
+        # ── Send call report ──────────────────────────────────────────────────
+        if not transcript:
+            logger.warning("No transcript — skipping call report")
+            return
 
         payload = {
             "roomName":            ctx.room.name,
@@ -381,9 +396,9 @@ async def entrypoint(ctx: JobContext):
                     json=payload,
                     headers={"Content-Type": "application/json"},
                 )
-                logger.info(f"✅ Sent: {res.status_code}")
+                logger.info(f"✅ Call report sent: {res.status_code}")
         except Exception as e:
-            logger.error(f"Failed to send: {e}")
+            logger.error(f"Failed to send call report: {e}")
 
     ctx.add_shutdown_callback(on_shutdown)
 
