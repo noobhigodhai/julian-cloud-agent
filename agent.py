@@ -362,16 +362,20 @@ async def entrypoint(ctx: JobContext):
 
         # ── Deduct minutes from user account ─────────────────────────────────
         if user_id and duration > 0:
+            url = f"{BACKEND_URL}/deduct-minutes"
+            logger.info(f"[minutes] POST {url} | userId={user_id} secondsUsed={duration}")
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
                     res = await client.post(
-                        f"{BACKEND_URL}/deduct-minutes",
+                        url,
                         json={"userId": user_id, "secondsUsed": duration},
                         headers={"Content-Type": "application/json"},
                     )
-                    logger.info(f"[minutes] deducted {duration}s for user {user_id} → HTTP {res.status_code}")
+                    logger.info(f"[minutes] HTTP {res.status_code} | body: {res.text[:200]}")
             except Exception as e:
-                logger.warning(f"[minutes] deduct request failed: {e}")
+                logger.error(f"[minutes] request failed: {e}")
+        else:
+            logger.warning(f"[minutes] SKIPPED — userId={user_id!r} duration={duration}s")
 
         # ── Send call report ──────────────────────────────────────────────────
         if not transcript:
@@ -400,8 +404,6 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.error(f"Failed to send call report: {e}")
 
-    ctx.add_shutdown_callback(on_shutdown)
-
     await session.start(
         agent=JulianAgent(topic=topic, native_lang=native_lang),
         room=ctx.room,
@@ -417,6 +419,9 @@ async def entrypoint(ctx: JobContext):
         await silence_task
     except asyncio.CancelledError:
         pass
+
+    logger.info("[entrypoint] Room disconnected — running shutdown")
+    await on_shutdown()
 
 
 if __name__ == "__main__":
