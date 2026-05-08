@@ -364,7 +364,7 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"[shutdown] duration={duration}s | userId={user_id}")
 
         # ── Deduct minutes from user account ─────────────────────────────────
-        if user_id and duration > 0:
+        if user_id:
             url = f"{BACKEND_URL}/deduct-minutes"
             logger.info(f"[minutes] POST {url} | userId={user_id} secondsUsed={duration}")
             try:
