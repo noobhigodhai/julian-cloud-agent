@@ -257,15 +257,7 @@ async def entrypoint(ctx: JobContext):
     session.on("user_speech_committed", lambda ev: logger.info(f"[session] user said: {getattr(ev, 'user_transcript', '')!r}"))
     session.on("agent_speech_committed", lambda ev: logger.info("[session] agent spoke"))
 
-    # ─── Send transcript to client via data channel ──────────────────────────
-    async def _send_to_client(role: str, text: str):
-        try:
-            data = json.dumps({"t": "tx", "r": role, "m": text}).encode("utf-8")
-            await ctx.room.local_participant.publish_data(data, reliable=True)
-            logger.info(f"📡 [TX] Sent {role}: {text[:60]}...")
-        except Exception as e:
-            logger.warning(f"⚠️ [TX] publish_data failed: {e}")
-
+    # ─── Save BOTH user and assistant utterances to DB ───────────────────────
     @session.on("conversation_item_added")
     def on_item_added(event):
         try:
@@ -277,15 +269,12 @@ async def entrypoint(ctx: JobContext):
                 transcript.append(entry)
                 logger.info(f"{'User' if role == 'user' else 'Julian'}: {text}")
 
-                # Send to client instantly
-                asyncio.create_task(_send_to_client(role, text))
-
-                if role == "user" and user_id:
+                # Save both user AND assistant to DB for client polling
+                if user_id:
                     asyncio.create_task(_save_utterance(user_id, ctx.room.name, entry))
         except Exception as e:
             logger.error(f"Error in on_item_added: {e}")
 
-    # ─── Silence prompt loop ─────────────────────────────────────────────────
     async def _silence_prompt_loop():
         while True:
             await asyncio.sleep(8)
