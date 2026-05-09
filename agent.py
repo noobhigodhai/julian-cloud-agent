@@ -144,10 +144,28 @@ LISTENING RULES:
 
 
 class JulianAgent(Agent):
-    def __init__(self, topic=None, native_lang=None):
+    def __init__(self, topic=None, native_lang=None, on_llm_done=None):
         self._topic = topic
         self._native_lang = native_lang
+        self._on_llm_done = on_llm_done
         super().__init__(instructions=build_instructions(topic, native_lang))
+
+    # ─── Intercept LLM output BEFORE TTS speaks it ──────────────────────────
+    async def llm_node(self, chat_ctx, tools, model_settings):
+        full_text = []
+        async for token in Agent.llm_node(self, chat_ctx, tools, model_settings):
+            if isinstance(token, str):
+                full_text.append(token)
+            yield token
+
+        # LLM is done generating → save to DB NOW
+        # TTS is still processing/speaking → user sees text early
+        text = "".join(full_text)
+        if text and self._on_llm_done:
+            try:
+                await self._on_llm_done(text)
+            except Exception as e:
+                logger.warning(f"on_llm_done error: {e}")
 
     async def on_enter(self):
         lang_name = LANGUAGE_NAMES.get(self._native_lang or "", None)
@@ -257,24 +275,43 @@ async def entrypoint(ctx: JobContext):
     session.on("user_speech_committed", lambda ev: logger.info(f"[session] user said: {getattr(ev, 'user_transcript', '')!r}"))
     session.on("agent_speech_committed", lambda ev: logger.info("[session] agent spoke"))
 
-    # ─── Save BOTH user and assistant utterances to DB ───────────────────────
+    # ─── Save utterance to DB ────────────────────────────────────────────────
+    async def _save_utterance(uid, room_name, entry):
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(
+                    f"{BACKEND_URL}/api/live-transcript",
+                    json={"userId": uid, "roomName": room_name, "entry": entry},
+                    headers={"Content-Type": "application/json"},
+                )
+        except Exception as e:
+            logger.warning(f"Live transcript save failed: {e}")
+
+    # ─── Called by llm_node BEFORE TTS speaks ────────────────────────────────
+    async def _on_llm_done(text):
+        entry = {"role": "assistant", "text": text, "time": _now().isoformat()}
+        transcript.append(entry)
+        logger.info(f"📝 [EARLY] Julian: {text[:60]}...")
+        if user_id:
+            await _save_utterance(user_id, ctx.room.name, entry)
+
+    # ─── Save user speech (fires after user finishes speaking) ───────────────
     @session.on("conversation_item_added")
     def on_item_added(event):
         try:
             item = event.item
             role = getattr(item, "role", None)
             text = getattr(item, "text_content", None) or getattr(item, "text", None)
-            if role and text:
-                entry = {"role": role, "text": text, "time": _now().isoformat()}
+            if role == "user" and text:
+                entry = {"role": "user", "text": text, "time": _now().isoformat()}
                 transcript.append(entry)
-                logger.info(f"{'User' if role == 'user' else 'Julian'}: {text}")
-
-                # Save both user AND assistant to DB for client polling
+                logger.info(f"User: {text}")
                 if user_id:
                     asyncio.create_task(_save_utterance(user_id, ctx.room.name, entry))
         except Exception as e:
             logger.error(f"Error in on_item_added: {e}")
 
+    # ─── Silence prompt loop ─────────────────────────────────────────────────
     async def _silence_prompt_loop():
         while True:
             await asyncio.sleep(8)
@@ -294,17 +331,6 @@ async def entrypoint(ctx: JobContext):
                     )
             except Exception as e:
                 logger.warning(f"Silence loop error: {e}")
-
-    async def _save_utterance(uid, room_name, entry):
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                await client.post(
-                    f"{BACKEND_URL}/api/live-transcript",
-                    json={"userId": uid, "roomName": room_name, "entry": entry},
-                    headers={"Content-Type": "application/json"},
-                )
-        except Exception as e:
-            logger.warning(f"Live transcript save failed: {e}")
 
     async def on_shutdown():
         logger.info(f"Shutdown | Lines: {len(transcript)}")
@@ -342,7 +368,12 @@ async def entrypoint(ctx: JobContext):
 
     start_time = _now()
     logger.info(f"[session] call started at {start_time.isoformat()}")
-    await session.start(agent=JulianAgent(topic=topic, native_lang=native_lang), room=ctx.room)
+
+    # Pass _on_llm_done callback so text is saved BEFORE TTS speaks
+    await session.start(
+        agent=JulianAgent(topic=topic, native_lang=native_lang, on_llm_done=_on_llm_done),
+        room=ctx.room,
+    )
 
     silence_task = asyncio.create_task(_silence_prompt_loop())
     disconnect_event = asyncio.Event()
