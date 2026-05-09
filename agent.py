@@ -21,29 +21,13 @@ logger = logging.getLogger("julian-cloud-agent")
 BACKEND_URL = os.environ.get("BACKEND_URL", "https://specker.ai")
 
 LANGUAGE_NAMES = {
-    "hi": "Hindi",
-    "ta": "Tamil",
-    "te": "Telugu",
-    "mr": "Marathi",
-    "kn": "Kannada",
-    "tl": "Filipino/Tagalog",
-    "bn": "Bengali",
-    "es": "Spanish",
-    "fr": "French",
-    "de": "German",
-    "pt": "Portuguese",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "ar": "Arabic",
-    "id": "Indonesian/Bahasa",
-    "ms": "Malay",
-    "vi": "Vietnamese",
-    "zh": "Mandarin Chinese",
-    "tr": "Turkish",
-    "ru": "Russian",
-    "it": "Italian",
-    "nl": "Dutch",
-    "en": "English",
+    "hi": "Hindi", "ta": "Tamil", "te": "Telugu", "mr": "Marathi",
+    "kn": "Kannada", "tl": "Filipino/Tagalog", "bn": "Bengali",
+    "es": "Spanish", "fr": "French", "de": "German", "pt": "Portuguese",
+    "ja": "Japanese", "ko": "Korean", "ar": "Arabic",
+    "id": "Indonesian/Bahasa", "ms": "Malay", "vi": "Vietnamese",
+    "zh": "Mandarin Chinese", "tr": "Turkish", "ru": "Russian",
+    "it": "Italian", "nl": "Dutch", "en": "English",
 }
 
 DEEPGRAM_LANG_MAP = {
@@ -55,29 +39,29 @@ DEEPGRAM_LANG_MAP = {
 }
 
 GOOGLE_VOICE_MAP = {
-    "hi": ("hi-IN-Chirp3-HD-Aoede",  "hi-IN"),
-    "ta": ("ta-IN-Chirp3-HD-Aoede",  "ta-IN"),
-    "te": ("te-IN-Chirp3-HD-Aoede",  "te-IN"),
-    "mr": ("mr-IN-Chirp3-HD-Aoede",  "mr-IN"),
-    "kn": ("kn-IN-Chirp3-HD-Aoede",  "kn-IN"),
+    "hi": ("hi-IN-Chirp3-HD-Aoede", "hi-IN"),
+    "ta": ("ta-IN-Chirp3-HD-Aoede", "ta-IN"),
+    "te": ("te-IN-Chirp3-HD-Aoede", "te-IN"),
+    "mr": ("mr-IN-Chirp3-HD-Aoede", "mr-IN"),
+    "kn": ("kn-IN-Chirp3-HD-Aoede", "kn-IN"),
     "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),
-    "bn": ("bn-IN-Chirp3-HD-Aoede",  "bn-IN"),
-    "es": ("es-ES-Chirp3-HD-Aoede",  "es-ES"),
-    "fr": ("fr-FR-Chirp3-HD-Aoede",  "fr-FR"),
-    "de": ("de-DE-Chirp3-HD-Aoede",  "de-DE"),
-    "pt": ("pt-BR-Chirp3-HD-Aoede",  "pt-BR"),
-    "ja": ("ja-JP-Chirp3-HD-Aoede",  "ja-JP"),
-    "ko": ("ko-KR-Chirp3-HD-Aoede",  "ko-KR"),
-    "ar": ("ar-XA-Chirp3-HD-Aoede",  "ar-XA"),
-    "id": ("id-ID-Chirp3-HD-Aoede",  "id-ID"),
-    "ms": ("ms-MY-Chirp3-HD-Aoede",  "ms-MY"),
-    "vi": ("vi-VN-Chirp3-HD-Aoede",  "vi-VN"),
+    "bn": ("bn-IN-Chirp3-HD-Aoede", "bn-IN"),
+    "es": ("es-ES-Chirp3-HD-Aoede", "es-ES"),
+    "fr": ("fr-FR-Chirp3-HD-Aoede", "fr-FR"),
+    "de": ("de-DE-Chirp3-HD-Aoede", "de-DE"),
+    "pt": ("pt-BR-Chirp3-HD-Aoede", "pt-BR"),
+    "ja": ("ja-JP-Chirp3-HD-Aoede", "ja-JP"),
+    "ko": ("ko-KR-Chirp3-HD-Aoede", "ko-KR"),
+    "ar": ("ar-XA-Chirp3-HD-Aoede", "ar-XA"),
+    "id": ("id-ID-Chirp3-HD-Aoede", "id-ID"),
+    "ms": ("ms-MY-Chirp3-HD-Aoede", "ms-MY"),
+    "vi": ("vi-VN-Chirp3-HD-Aoede", "vi-VN"),
     "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),
-    "tr": ("tr-TR-Chirp3-HD-Aoede",  "tr-TR"),
-    "ru": ("ru-RU-Chirp3-HD-Aoede",  "ru-RU"),
-    "it": ("it-IT-Chirp3-HD-Aoede",  "it-IT"),
-    "nl": ("nl-NL-Chirp3-HD-Aoede",  "nl-NL"),
-    "en": ("en-US-Chirp3-HD-Aoede",  "en-US"),
+    "tr": ("tr-TR-Chirp3-HD-Aoede", "tr-TR"),
+    "ru": ("ru-RU-Chirp3-HD-Aoede", "ru-RU"),
+    "it": ("it-IT-Chirp3-HD-Aoede", "it-IT"),
+    "nl": ("nl-NL-Chirp3-HD-Aoede", "nl-NL"),
+    "en": ("en-US-Chirp3-HD-Aoede", "en-US"),
 }
 
 
@@ -161,7 +145,7 @@ LISTENING RULES:
 
 class JulianAgent(Agent):
     def __init__(self, topic=None, native_lang=None):
-        self._topic       = topic
+        self._topic = topic
         self._native_lang = native_lang
         super().__init__(instructions=build_instructions(topic, native_lang))
 
@@ -200,19 +184,19 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name="julian-cloud")
 async def entrypoint(ctx: JobContext):
-    transcript           = []
-    start_time           = None
+    transcript = []
+    start_time = None
     participant_identity = None
-    user_email           = None
-    user_id              = None
-    topic                = None
-    native_lang          = None
+    user_email = None
+    user_id = None
+    topic = None
+    native_lang = None
 
     try:
-        job_meta    = json.loads(ctx.job.metadata or "{}")
-        user_email  = job_meta.get("email")
-        user_id     = job_meta.get("userId")
-        topic       = job_meta.get("topic")
+        job_meta = json.loads(ctx.job.metadata or "{}")
+        user_email = job_meta.get("email")
+        user_id = job_meta.get("userId")
+        topic = job_meta.get("topic")
         native_lang = job_meta.get("nativeLang")
         logger.info(f"[job_meta] userId={user_id} | topic={topic!r} | nativeLang={native_lang!r}")
     except Exception as e:
@@ -225,10 +209,10 @@ async def entrypoint(ctx: JobContext):
         participant_identity = participant.identity
         raw_meta = participant.metadata or "{}"
         try:
-            meta        = json.loads(raw_meta)
-            user_email  = meta.get("email")      or user_email
-            user_id     = meta.get("userId")     or user_id
-            topic       = meta.get("topic")      or topic
+            meta = json.loads(raw_meta)
+            user_email = meta.get("email") or user_email
+            user_id = meta.get("userId") or user_id
+            topic = meta.get("topic") or topic
             native_lang = meta.get("nativeLang") or native_lang
             logger.info(f"[participant_meta] identity={participant_identity} | topic={topic!r} | nativeLang={native_lang!r}")
         except Exception as e:
@@ -268,28 +252,19 @@ async def entrypoint(ctx: JobContext):
         max_endpointing_delay=0.8,
     )
 
-    session.on("user_speech_started",    lambda _:  logger.info("[session] 🎤 user_speech_started"))
-    session.on("agent_speech_started",   lambda _:  logger.info("[session] 🔊 agent_speech_started"))
-    session.on("user_speech_committed",  lambda ev: logger.info(f"[session] user said: {getattr(ev, 'user_transcript', '')!r}"))
+    session.on("user_speech_started", lambda _: logger.info("[session] 🎤 user_speech_started"))
+    session.on("agent_speech_started", lambda _: logger.info("[session] 🔊 agent_speech_started"))
+    session.on("user_speech_committed", lambda ev: logger.info(f"[session] user said: {getattr(ev, 'user_transcript', '')!r}"))
     session.on("agent_speech_committed", lambda ev: logger.info("[session] agent spoke"))
 
-    # ─── Send transcript to client via Data Channel ──────────────────────────
-    async def _send_data(role: str, text: str):
-        """Publish a JSON transcript message over LiveKit data channel."""
+    # ─── Send transcript to client via data channel ──────────────────────────
+    async def _send_to_client(role: str, text: str):
         try:
-            payload = json.dumps({
-                "type": "transcript",
-                "role": role,
-                "text": text,
-                "time": _now().isoformat(),
-            }).encode("utf-8")
-            await ctx.room.local_participant.publish_data(
-                payload=payload,
-                reliable=True,
-            )
-            logger.info(f"📡 [DATA] Sent {role}: {text[:60]}...")
+            data = json.dumps({"t": "tx", "r": role, "m": text}).encode("utf-8")
+            await ctx.room.local_participant.publish_data(data, reliable=True)
+            logger.info(f"📡 [TX] Sent {role}: {text[:60]}...")
         except Exception as e:
-            logger.warning(f"⚠️ [DATA] Send failed: {e}")
+            logger.warning(f"⚠️ [TX] publish_data failed: {e}")
 
     @session.on("conversation_item_added")
     def on_item_added(event):
@@ -302,14 +277,15 @@ async def entrypoint(ctx: JobContext):
                 transcript.append(entry)
                 logger.info(f"{'User' if role == 'user' else 'Julian'}: {text}")
 
-                # Send BOTH user and assistant text to client via data channel
-                asyncio.create_task(_send_data(role, text))
+                # Send to client instantly
+                asyncio.create_task(_send_to_client(role, text))
 
                 if role == "user" and user_id:
                     asyncio.create_task(_save_utterance(user_id, ctx.room.name, entry))
         except Exception as e:
             logger.error(f"Error in on_item_added: {e}")
 
+    # ─── Silence prompt loop ─────────────────────────────────────────────────
     async def _silence_prompt_loop():
         while True:
             await asyncio.sleep(8)
@@ -320,7 +296,7 @@ async def entrypoint(ctx: JobContext):
                 if last["role"] != "assistant":
                     continue
                 last_time = datetime.fromisoformat(last["time"]).replace(tzinfo=timezone.utc)
-                silence   = (_now() - last_time).total_seconds()
+                silence = (_now() - last_time).total_seconds()
                 if silence >= 20:
                     logger.info(f"Silence {silence:.0f}s — prompting")
                     await session.generate_reply(
