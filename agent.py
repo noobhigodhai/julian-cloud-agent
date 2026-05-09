@@ -158,8 +158,7 @@ class JulianAgent(Agent):
                 full_text.append(token)
             yield token
 
-        # LLM is done generating → save to DB NOW
-        # TTS is still processing/speaking → user sees text early
+        # LLM done generating → save to DB NOW (TTS still speaking)
         text = "".join(full_text)
         if text and self._on_llm_done:
             try:
@@ -291,11 +290,11 @@ async def entrypoint(ctx: JobContext):
     async def _on_llm_done(text):
         entry = {"role": "assistant", "text": text, "time": _now().isoformat()}
         transcript.append(entry)
-        logger.info(f"📝 [EARLY] Julian: {text[:60]}...")
+        logger.info(f"📝 [EARLY] Julian: {text[:80]}...")
         if user_id:
             await _save_utterance(user_id, ctx.room.name, entry)
 
-    # ─── Save user speech (fires after user finishes speaking) ───────────────
+    # ─── Save user speech ────────────────────────────────────────────────────
     @session.on("conversation_item_added")
     def on_item_added(event):
         try:
@@ -342,7 +341,11 @@ async def entrypoint(ctx: JobContext):
             logger.info(f"[minutes] POST {url} | userId={user_id} secondsUsed={duration}")
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    res = await client.post(url, json={"userId": user_id, "secondsUsed": duration}, headers={"Content-Type": "application/json"})
+                    res = await client.post(
+                        url,
+                        json={"userId": user_id, "secondsUsed": duration},
+                        headers={"Content-Type": "application/json"},
+                    )
                     logger.info(f"[minutes] HTTP {res.status_code} | body: {res.text[:200]}")
             except Exception as e:
                 logger.error(f"[minutes] request failed: {e}")
@@ -354,14 +357,23 @@ async def entrypoint(ctx: JobContext):
             return
 
         payload = {
-            "roomName": ctx.room.name, "participantIdentity": participant_identity,
-            "userEmail": user_email, "userId": user_id, "duration": duration,
-            "transcript": transcript, "topic": topic, "nativeLang": native_lang,
+            "roomName": ctx.room.name,
+            "participantIdentity": participant_identity,
+            "userEmail": user_email,
+            "userId": user_id,
+            "duration": duration,
+            "transcript": transcript,
+            "topic": topic,
+            "nativeLang": native_lang,
             "timestamp": _now().isoformat(),
         }
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                res = await client.post(f"{BACKEND_URL}/api/call-report", json=payload, headers={"Content-Type": "application/json"})
+                res = await client.post(
+                    f"{BACKEND_URL}/api/call-report",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
                 logger.info(f"✅ Call report sent: {res.status_code}")
         except Exception as e:
             logger.error(f"Failed to send call report: {e}")
@@ -369,7 +381,6 @@ async def entrypoint(ctx: JobContext):
     start_time = _now()
     logger.info(f"[session] call started at {start_time.isoformat()}")
 
-    # Pass _on_llm_done callback so text is saved BEFORE TTS speaks
     await session.start(
         agent=JulianAgent(topic=topic, native_lang=native_lang, on_llm_done=_on_llm_done),
         room=ctx.room,
