@@ -442,7 +442,6 @@ def get_azure_tts(native_lang: str | None):
         voice=voice,
         speech_key=os.environ.get("AZURE_SPEECH_KEY"),
         speech_region=os.environ.get("AZURE_SPEECH_REGION"),
-        prosody={"rate": "+20%"},
     )
 
 
