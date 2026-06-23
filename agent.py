@@ -442,7 +442,7 @@ def get_azure_tts(native_lang: str | None):
         voice=voice,
         speech_key=os.environ.get("AZURE_SPEECH_KEY"),
         speech_region=os.environ.get("AZURE_SPEECH_REGION"),
-        prosody={"rate": "fast"},
+        prosody={"rate": "+20%"},
     )
 
 
@@ -511,29 +511,32 @@ class JulianAgent(Agent):
     #   2. Fire DB save AND TTS synthesis in true parallel (asyncio.gather)
     #   3. Yield TTS audio chunks as they arrive — no extra latency added
     async def tts_node(self, text, model_settings):
-        # Collect the full text from the async iterator
-        full_text_parts = []
-        async for chunk in text:
-            full_text_parts.append(chunk)
+        collected = []
+
+        # Buffer into sentences so Azure synthesizes a full phrase at a time,
+        # not one word per request (which causes gaps between words).
+        async def _sentence_stream():
+            buffer = ""
+            async for chunk in text:
+                collected.append(chunk)
+                chunk_str = chunk.text if hasattr(chunk, "text") else str(chunk)
+                buffer += chunk_str
+                if buffer.rstrip() and buffer.rstrip()[-1] in ".!?,;:":
+                    yield buffer
+                    buffer = ""
+            if buffer.strip():
+                yield buffer
+
+        async for audio_chunk in Agent.tts_node(self, _sentence_stream(), model_settings):
+            yield audio_chunk
 
         full_text = "".join(
             t.text if hasattr(t, "text") else str(t)
-            for t in full_text_parts
+            for t in collected
         ).strip()
-
         logger.info(f"📝 [TTS] Intercepted: {full_text[:80]}...")
-
-        # Fire DB save immediately — truly parallel, never blocks TTS
         if self._on_tts_text and full_text:
             asyncio.create_task(self._on_tts_text(full_text))
-
-        # Re-create an async iterator from the collected chunks and pass to TTS
-        async def _replay():
-            for chunk in full_text_parts:
-                yield chunk
-
-        async for audio_chunk in Agent.tts_node(self, _replay(), model_settings):
-            yield audio_chunk
 
     async def on_enter(self):
         greeting = (
