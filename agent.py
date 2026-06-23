@@ -10,7 +10,7 @@
 
 # from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 # from livekit.plugins import silero
-# from livekit.plugins import openai, deepgram, google
+# from livekit.plugins import openai, deepgram, azure
 
 # logging.basicConfig(
 #     level=logging.INFO,
@@ -245,7 +245,7 @@
 #     session = AgentSession(
 #         stt=get_deepgram_stt(native_lang),
 #         llm=openai.LLM(model="gpt-4o-mini"),
-#         tts=get_google_tts(native_lang),
+#         tts=get_azure_tts(native_lang),
 #         vad=ctx.proc.userdata["vad"],
 #         allow_interruptions=True,
 #         min_endpointing_delay=0.3,
@@ -374,7 +374,7 @@ def _now() -> datetime:
 
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
-from livekit.plugins import openai, deepgram, google
+from livekit.plugins import openai, deepgram, azure
 
 logging.basicConfig(
     level=logging.INFO,
@@ -402,30 +402,30 @@ DEEPGRAM_LANG_MAP = {
     "it": "it", "nl": "nl", "en": "en",
 }
 
-GOOGLE_VOICE_MAP = {
-    "hi": ("hi-IN-Chirp3-HD-Aoede", "hi-IN"),
-    "ta": ("ta-IN-Chirp3-HD-Aoede", "ta-IN"),
-    "te": ("te-IN-Chirp3-HD-Aoede", "te-IN"),
-    "mr": ("mr-IN-Chirp3-HD-Aoede", "mr-IN"),
-    "kn": ("kn-IN-Chirp3-HD-Aoede", "kn-IN"),
-    "tl": ("fil-PH-Chirp3-HD-Aoede", "fil-PH"),
-    "bn": ("bn-IN-Chirp3-HD-Aoede", "bn-IN"),
-    "es": ("es-ES-Chirp3-HD-Aoede", "es-ES"),
-    "fr": ("fr-FR-Chirp3-HD-Aoede", "fr-FR"),
-    "de": ("de-DE-Chirp3-HD-Aoede", "de-DE"),
-    "pt": ("pt-BR-Chirp3-HD-Aoede", "pt-BR"),
-    "ja": ("ja-JP-Chirp3-HD-Aoede", "ja-JP"),
-    "ko": ("ko-KR-Chirp3-HD-Aoede", "ko-KR"),
-    "ar": ("ar-XA-Chirp3-HD-Aoede", "ar-XA"),
-    "id": ("id-ID-Chirp3-HD-Aoede", "id-ID"),
-    "ms": ("ms-MY-Chirp3-HD-Aoede", "ms-MY"),
-    "vi": ("vi-VN-Chirp3-HD-Aoede", "vi-VN"),
-    "zh": ("cmn-CN-Chirp3-HD-Aoede", "cmn-CN"),
-    "tr": ("tr-TR-Chirp3-HD-Aoede", "tr-TR"),
-    "ru": ("ru-RU-Chirp3-HD-Aoede", "ru-RU"),
-    "it": ("it-IT-Chirp3-HD-Aoede", "it-IT"),
-    "nl": ("nl-NL-Chirp3-HD-Aoede", "nl-NL"),
-    "en": ("en-US-Chirp3-HD-Aoede", "en-US"),
+AZURE_VOICE_MAP = {
+    "hi": "hi-IN-SwaraNeural",
+    "ta": "ta-IN-PallaviNeural",
+    "te": "te-IN-ShrutiNeural",
+    "mr": "mr-IN-AarohiNeural",
+    "kn": "kn-IN-SapnaNeural",
+    "tl": "fil-PH-BlessicaNeural",
+    "bn": "bn-IN-TanishaaNeural",
+    "es": "es-ES-ElviraNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "de": "de-DE-KatjaNeural",
+    "pt": "pt-BR-FranciscaNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "ko": "ko-KR-SunHiNeural",
+    "ar": "ar-SA-ZariyahNeural",
+    "id": "id-ID-GadisNeural",
+    "ms": "ms-MY-YasminNeural",
+    "vi": "vi-VN-HoaiMyNeural",
+    "zh": "zh-CN-XiaoxiaoNeural",
+    "tr": "tr-TR-EmelNeural",
+    "ru": "ru-RU-SvetlanaNeural",
+    "it": "it-IT-ElsaNeural",
+    "nl": "nl-NL-ColetteNeural",
+    "en": "en-US-JennyNeural",
 }
 
 
@@ -435,18 +435,14 @@ def get_deepgram_stt(native_lang: str | None):
     return deepgram.STT(model="nova-3", language=lang_code)
 
 
-def get_google_tts(native_lang: str | None):
-    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
-    creds = json.loads(creds_json) if creds_json else None
-    voice_name, language = GOOGLE_VOICE_MAP.get(
-        native_lang or "", ("en-US-Chirp3-HD-Aoede", "en-US")
+def get_azure_tts(native_lang: str | None):
+    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-JennyNeural")
+    logger.info(f"🎙️ TTS: Azure Neural | voice={voice}")
+    return azure.TTS(
+        voice=voice,
+        speech_key=os.environ.get("AZURE_SPEECH_KEY"),
+        speech_region=os.environ.get("AZURE_SPEECH_REGION"),
     )
-    logger.info(f"🎙️ TTS: Google Chirp3-HD | voice={voice_name} | lang={language}")
-    try:
-        return google.TTS(voice_name=voice_name, language=language, gender="female", credentials_info=creds)
-    except Exception as e:
-        logger.warning(f"Google TTS failed ({e}) — fallback to en-US")
-        return google.TTS(voice_name="en-US-Chirp3-HD-Aoede", language="en-US", gender="female", credentials_info=creds)
 
 
 def build_instructions(topic, native_lang_code):
@@ -669,7 +665,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=get_deepgram_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_google_tts(native_lang),
+        tts=get_azure_tts(native_lang),
         vad=ctx.proc.userdata["vad"],
         allow_interruptions=True,
         min_endpointing_delay=0.3,
