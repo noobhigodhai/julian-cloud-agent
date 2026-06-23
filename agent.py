@@ -442,6 +442,7 @@ def get_azure_tts(native_lang: str | None):
         voice=voice,
         speech_key=os.environ.get("AZURE_SPEECH_KEY"),
         speech_region=os.environ.get("AZURE_SPEECH_REGION"),
+        prosody={"rate": "fast"},
     )
 
 
@@ -456,32 +457,25 @@ def build_instructions(topic, native_lang_code):
 
     if lang_name and lang_name != "English":
         lang_line = f"""
-You are an English coach. The user speaks {lang_name} and is learning English.
+You are an English coach. The user's native language is {lang_name} but they are here to practice English.
 
 YOUR SPEAKING STYLE:
-- Speak in a natural mix of {lang_name} and English — this is called code-switching.
-- Use {lang_name} for greetings, encouragement, filler words, and emotional warmth.
-- Use English for explanations, corrections, and the main conversation.
-- Example (Hindi): "Namaste! So aaj hum travel ke baare mein baat karenge. How are you doing today?"
-- Example (Hindi): "Arre yaar, that was really good! Aur bolo, what do you love about travelling?"
-- Example (Filipino): "Kamusta ka! So today we will practice English together. Okay lang ba?"
-- Example (Tamil): "Vanakkam! Today we practice English. Neenga eppadi irukkeenga?"
-- Keep it warm, fun and natural — like a bilingual friend.
-- NEVER speak 100% in {lang_name} — always keep English as the main language.
+- ALWAYS respond in English only. Never use {lang_name} words, phrases, or translations.
+- Be warm, encouraging, and natural — like a friendly English-speaking coach.
+- Keep responses short — 1 to 2 sentences. Always ask a follow-up question.
 - ONLY speak the actual words. No stage directions, no labels, no brackets.
 
 WHEN USER SPEAKS IN {lang_name}:
-- Understand what they said and respond naturally in the mixed style.
-- Gently teach them the English version: "Oh nice! In English you can say: I am doing well."
-- Ask them to try saying it in English.
-- When they do, praise them and continue the conversation.
+- Understand what they said, then respond ONLY in English.
+- Gently encourage them to try saying it in English: "Try saying that in English! I understood you — now let's say it in English."
+- Do NOT repeat or translate what they said into {lang_name}.
 
 WHEN USER SPEAKS IN ENGLISH:
-- Respond in mixed style naturally.
+- Respond in English naturally.
 - Gently correct any grammar mistakes by using the correct form in your reply.
 - Ask a follow-up question to keep them talking.
 """
-        logger.info(f"Language mode: MIXED ({lang_name} + English)")
+        logger.info(f"Language mode: English only (native={lang_name})")
     else:
         lang_line = """
 Speak naturally in English only.
@@ -542,26 +536,13 @@ class JulianAgent(Agent):
             yield audio_chunk
 
     async def on_enter(self):
-        lang_name = LANGUAGE_NAMES.get(self._native_lang or "", None)
-
-        if lang_name and lang_name != "English":
-            greeting = (
-                f"Greet the user with ONE short warm {lang_name} phrase "
-                f"(like Namaste / Kamusta / Vanakkam / Hola), "
-                f"then immediately switch to a mix of {lang_name} and English. "
-                f"Tell them today you'll practice English together"
-                f"{f' about {self._topic}' if self._topic else ''}. "
-                f"Ask how they are doing. "
-                f"Keep it warm, 2 sentences max. "
-                f"Speak ONLY the words — no labels, no brackets."
-            )
-        else:
-            greeting = (
-                f"Greet the user warmly in English. "
-                f"Tell them today you will practice English together"
-                f"{f' about {self._topic}' if self._topic else ''}. "
-                f"Ask how they are doing today."
-            )
+        greeting = (
+            f"Greet the user warmly in English only. "
+            f"Tell them today you will practice English together"
+            f"{f' about {self._topic}' if self._topic else ''}. "
+            f"Ask how they are doing today. "
+            f"Keep it to 2 sentences max. Speak ONLY the words — no labels, no brackets."
+        )
 
         logger.info(f"[on_enter] greeting: {greeting}")
         await self.session.generate_reply(instructions=greeting, allow_interruptions=True)
