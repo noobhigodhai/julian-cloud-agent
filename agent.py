@@ -456,25 +456,26 @@ def build_instructions(topic, native_lang_code):
 
     if lang_name and lang_name != "English":
         lang_line = f"""
-You are an English coach. The user's native language is {lang_name} but they are here to practice English.
+You are an English coach. The user's native language is {lang_name}.
 
-YOUR SPEAKING STYLE:
-- ALWAYS respond in English only. Never use {lang_name} words, phrases, or translations.
-- Be warm, encouraging, and natural — like a friendly English-speaking coach.
-- Keep responses short — 1 to 2 sentences. Always ask a follow-up question.
+ADAPTIVE SPEAKING STYLE:
+- If the user is speaking comfortably in English, respond ONLY in English — no {lang_name} at all.
+- If the user is struggling, hesitant, or speaks to you in {lang_name}, you may use a few brief {lang_name} words (a greeting, a word of encouragement, or to clarify one tricky word) — but at least 80% of your response must still be English.
+- NEVER give a full sentence-by-sentence translation. {lang_name} is only a light seasoning to help them follow along, not a parallel conversation.
+- Be warm, encouraging, and natural. Keep responses short — 1 to 2 sentences. Always ask a follow-up question.
 - ONLY speak the actual words. No stage directions, no labels, no brackets.
 
 WHEN USER SPEAKS IN {lang_name}:
-- Understand what they said, then respond ONLY in English.
-- Gently encourage them to try saying it in English: "Try saying that in English! I understood you — now let's say it in English."
-- Do NOT repeat or translate what they said into {lang_name}.
+- Understand what they said.
+- Respond mostly in English; you may add one short {lang_name} phrase of encouragement.
+- Encourage them to try saying it in English next.
 
 WHEN USER SPEAKS IN ENGLISH:
-- Respond in English naturally.
+- Respond purely in English.
 - Gently correct any grammar mistakes by using the correct form in your reply.
 - Ask a follow-up question to keep them talking.
 """
-        logger.info(f"Language mode: English only (native={lang_name})")
+        logger.info(f"Language mode: adaptive (mostly English, native={lang_name})")
     else:
         lang_line = """
 Speak naturally in English only.
@@ -510,32 +511,29 @@ class JulianAgent(Agent):
     #   2. Fire DB save AND TTS synthesis in true parallel (asyncio.gather)
     #   3. Yield TTS audio chunks as they arrive — no extra latency added
     async def tts_node(self, text, model_settings):
-        collected = []
-
-        # Buffer into sentences so Azure synthesizes a full phrase at a time,
-        # not one word per request (which causes gaps between words).
-        async def _sentence_stream():
-            buffer = ""
-            async for chunk in text:
-                collected.append(chunk)
-                chunk_str = chunk.text if hasattr(chunk, "text") else str(chunk)
-                buffer += chunk_str
-                if buffer.rstrip() and buffer.rstrip()[-1] in ".!?,;:":
-                    yield buffer
-                    buffer = ""
-            if buffer.strip():
-                yield buffer
-
-        async for audio_chunk in Agent.tts_node(self, _sentence_stream(), model_settings):
-            yield audio_chunk
+        # Responses are short (1-2 sentences), so synthesize the whole reply
+        # in a single Azure TTS call. Splitting into multiple calls (per word
+        # or per sentence) creates an audible seam/gap at every boundary —
+        # one call per turn gives one continuous, fluent audio stream.
+        full_text_parts = []
+        async for chunk in text:
+            full_text_parts.append(chunk)
 
         full_text = "".join(
             t.text if hasattr(t, "text") else str(t)
-            for t in collected
+            for t in full_text_parts
         ).strip()
+
         logger.info(f"📝 [TTS] Intercepted: {full_text[:80]}...")
         if self._on_tts_text and full_text:
             asyncio.create_task(self._on_tts_text(full_text))
+
+        async def _single_chunk():
+            if full_text:
+                yield full_text
+
+        async for audio_chunk in Agent.tts_node(self, _single_chunk(), model_settings):
+            yield audio_chunk
 
     async def on_enter(self):
         greeting = (
