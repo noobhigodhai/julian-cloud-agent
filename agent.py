@@ -375,6 +375,7 @@ def _now() -> datetime:
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram, azure
+from livekit.plugins.azure import ProsodyConfig
 
 logging.basicConfig(
     level=logging.INFO,
@@ -402,14 +403,19 @@ DEEPGRAM_LANG_MAP = {
     "it": "it", "nl": "nl", "en": "en",
 }
 
+# Indic languages use the bilingual en-IN-NeerjaIndicNeural voice, not a native
+# single-language voice — Julian's replies are mostly-English with occasional
+# native words, and native-language voices read those English words robotically.
+INDIC_VOICE = "en-IN-NeerjaIndicNeural"
+
 AZURE_VOICE_MAP = {
-    "hi": "hi-IN-SwaraNeural",
-    "ta": "ta-IN-PallaviNeural",
-    "te": "te-IN-ShrutiNeural",
-    "mr": "mr-IN-AarohiNeural",
-    "kn": "kn-IN-SapnaNeural",
+    "hi": INDIC_VOICE,
+    "ta": INDIC_VOICE,
+    "te": INDIC_VOICE,
+    "mr": INDIC_VOICE,
+    "kn": INDIC_VOICE,
+    "bn": INDIC_VOICE,
     "tl": "fil-PH-BlessicaNeural",
-    "bn": "bn-IN-TanishaaNeural",
     "es": "es-ES-ElviraNeural",
     "fr": "fr-FR-DeniseNeural",
     "de": "de-DE-KatjaNeural",
@@ -424,8 +430,8 @@ AZURE_VOICE_MAP = {
     "tr": "tr-TR-EmelNeural",
     "ru": "ru-RU-SvetlanaNeural",
     "it": "it-IT-ElsaNeural",
-    "nl": "nl-NL-ColetteNeural",
-    "en": "en-US-JennyNeural",
+    "nl": "nl-NL-FennaNeural",
+    "en": "en-US-AvaMultilingualNeural",
 }
 
 
@@ -436,10 +442,11 @@ def get_deepgram_stt(native_lang: str | None):
 
 
 def get_azure_tts(native_lang: str | None):
-    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-JennyNeural")
+    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-AvaMultilingualNeural")
     logger.info(f"🎙️ TTS: Azure Neural | voice={voice}")
     return azure.TTS(
         voice=voice,
+        prosody=ProsodyConfig(rate=1.1),
         speech_key=os.environ.get("AZURE_SPEECH_KEY"),
         speech_region=os.environ.get("AZURE_SPEECH_REGION"),
     )
