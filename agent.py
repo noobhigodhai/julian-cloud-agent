@@ -403,38 +403,10 @@ DEEPGRAM_LANG_MAP = {
     "it": "it", "nl": "nl", "en": "en",
 }
 
-# Indic languages use the bilingual en-IN-NeerjaIndicNeural voice, not a native
-# single-language voice — Stella's replies are mostly-English with occasional
-# native words, and native-language voices read those English words robotically.
-INDIC_VOICE = "en-IN-NeerjaIndicNeural"
-
-AZURE_VOICE_MAP = {
-    "hi": INDIC_VOICE,
-    "ta": INDIC_VOICE,
-    "te": INDIC_VOICE,
-    "mr": INDIC_VOICE,
-    "kn": INDIC_VOICE,
-    "bn": INDIC_VOICE,
-    "tl": "fil-PH-BlessicaNeural",
-    "es": "es-ES-ElviraNeural",
-    "fr": "fr-FR-DeniseNeural",
-    "de": "de-DE-KatjaNeural",
-    "pt": "pt-BR-FranciscaNeural",
-    "ja": "ja-JP-NanamiNeural",
-    "ko": "ko-KR-SunHiNeural",
-    "ar": "ar-SA-ZariyahNeural",
-    "id": "id-ID-GadisNeural",
-    "ms": "ms-MY-YasminNeural",
-    "vi": "vi-VN-HoaiMyNeural",
-    "zh": "zh-CN-XiaoxiaoNeural",
-    "tr": "tr-TR-EmelNeural",
-    "ru": "ru-RU-SvetlanaNeural",
-    "it": "it-IT-ElsaNeural",
-    "nl": "nl-NL-FennaNeural",
-    # Dragon HD Flash is Azure's newest generative voice model — American
-    # accent, more natural/fluent delivery than the classic Neural voices.
-    "en": "en-US-Tiana:DragonHDFlashLatestNeural",
-}
+# Stella always speaks English only (American accent) regardless of the
+# user's native language — Deepgram STT below still recognizes the user's
+# native language so they can be understood, but replies never switch language.
+STELLA_VOICE = "en-US-Tiana:DragonHDFlashLatestNeural"
 
 
 def get_deepgram_stt(native_lang: str | None):
@@ -443,11 +415,10 @@ def get_deepgram_stt(native_lang: str | None):
     return deepgram.STT(model="nova-3", language=lang_code)
 
 
-def get_azure_tts(native_lang: str | None):
-    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-Tiana:DragonHDFlashLatestNeural")
-    logger.info(f"🎙️ TTS: Azure Neural | voice={voice}")
+def get_azure_tts():
+    logger.info(f"🎙️ TTS: Azure Neural | voice={STELLA_VOICE}")
     return azure.TTS(
-        voice=voice,
+        voice=STELLA_VOICE,
         prosody=ProsodyConfig(rate=1.0),
         speech_key=os.environ.get("AZURE_SPEECH_KEY"),
         speech_region=os.environ.get("AZURE_SPEECH_REGION"),
@@ -465,35 +436,27 @@ def build_instructions(topic, native_lang_code):
 
     if lang_name and lang_name != "English":
         lang_line = f"""
-You are an English coach. The user's native language is {lang_name}.
-
-ADAPTIVE SPEAKING STYLE:
-- If the user is speaking comfortably in English, respond ONLY in English — no {lang_name} at all.
-- If the user is struggling, hesitant, or speaks to you in {lang_name}, you may use a few brief {lang_name} words (a greeting, a word of encouragement, or to clarify one tricky word) — but at least 80% of your response must still be English.
-- NEVER give a full sentence-by-sentence translation. {lang_name} is only a light seasoning to help them follow along, not a parallel conversation.
-- Be warm, encouraging, and natural. Keep responses short — 1 to 2 sentences. Always ask a follow-up question.
-- ONLY speak the actual words. No stage directions, no labels, no brackets.
-
-WHEN USER SPEAKS IN {lang_name}:
-- Understand what they said.
-- Respond mostly in English; you may add one short {lang_name} phrase of encouragement.
-- Encourage them to try saying it in English next.
-
-WHEN USER SPEAKS IN ENGLISH:
-- Respond purely in English.
-- Gently correct any grammar mistakes by using the correct form in your reply.
-- Ask a follow-up question to keep them talking.
+The user's native language is {lang_name} and they are learning English.
+They may speak to you in {lang_name} or English — understand either, but
+ALWAYS reply in English only, in an American English style. Never use any
+{lang_name} words in your replies, even a greeting — English only, always.
+Be warm, encouraging, and natural. Keep responses short — 1 to 2 sentences.
+Gently correct any grammar mistakes by using the correct form in your reply.
+Always ask a follow-up question to keep them talking.
+ONLY speak the actual words. No stage directions, no labels, no brackets.
 """
-        logger.info(f"Language mode: adaptive (mostly English, native={lang_name})")
+        logger.info(f"Language mode: English only (native={lang_name})")
     else:
         lang_line = """
-Speak naturally in English only.
+Speak naturally in English only, American English style.
 Gently correct any mistakes by naturally using the correct version in your reply.
 Keep responses short — 1 to 2 sentences. Always ask a follow-up question.
 """
         logger.info("Language mode: English only")
 
     return f"""You are Stella, a warm, fun, encouraging AI English coach on a phone call.
+You speak ONLY in English, in an American English style — never any other
+language, regardless of the user's native language.
 Keep responses SHORT — 1 to 2 sentences max. Be friendly and natural.
 Always ask a follow-up question to keep the conversation going.
 
@@ -655,7 +618,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=get_deepgram_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_azure_tts(native_lang),
+        tts=get_azure_tts(),
         vad=ctx.proc.userdata["vad"],
         allow_interruptions=True,
         min_endpointing_delay=0.3,
