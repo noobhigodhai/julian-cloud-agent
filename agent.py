@@ -374,7 +374,7 @@ def _now() -> datetime:
 
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
-from livekit.plugins import openai, deepgram, azure
+from livekit.plugins import openai, azure
 from livekit.plugins.azure.tts import ProsodyConfig
 
 logging.basicConfig(
@@ -395,12 +395,15 @@ LANGUAGE_NAMES = {
     "it": "Italian", "nl": "Dutch", "en": "English",
 }
 
-DEEPGRAM_LANG_MAP = {
-    "hi": "hi", "ta": "ta", "te": "te", "mr": "mr", "kn": "kn",
-    "tl": "tl", "bn": "bn", "es": "es", "fr": "fr", "de": "de",
-    "pt": "pt", "ja": "ja", "ko": "ko", "ar": "ar", "id": "id",
-    "ms": "ms", "vi": "vi", "zh": "zh", "tr": "tr", "ru": "ru",
-    "it": "it", "nl": "nl", "en": "en",
+# Azure STT recognizes English plus the user's native language in the same
+# session — Continuous Language ID auto-detects and switches between the two
+# candidate locales as the user code-switches mid-conversation.
+AZURE_STT_LANG_MAP = {
+    "hi": "hi-IN", "ta": "ta-IN", "te": "te-IN", "mr": "mr-IN", "kn": "kn-IN",
+    "tl": "fil-PH", "bn": "bn-IN", "es": "es-ES", "fr": "fr-FR", "de": "de-DE",
+    "pt": "pt-BR", "ja": "ja-JP", "ko": "ko-KR", "ar": "ar-SA", "id": "id-ID",
+    "ms": "ms-MY", "vi": "vi-VN", "zh": "zh-CN", "tr": "tr-TR", "ru": "ru-RU",
+    "it": "it-IT", "nl": "nl-NL", "en": "en-US",
 }
 
 # Stella always speaks English only (American accent) regardless of the
@@ -414,10 +417,15 @@ DEEPGRAM_LANG_MAP = {
 STELLA_VOICE = "en-US-AvaMultilingualNeural"
 
 
-def get_deepgram_stt(native_lang: str | None):
-    lang_code = DEEPGRAM_LANG_MAP.get(native_lang or "", "en")
-    logger.info(f"🎤 STT: Deepgram Nova-3 | language={lang_code}")
-    return deepgram.STT(model="nova-3", language=lang_code)
+def get_azure_stt(native_lang: str | None):
+    native_locale = AZURE_STT_LANG_MAP.get(native_lang or "", "")
+    languages = ["en-US", native_locale] if native_locale and native_locale != "en-US" else ["en-US"]
+    logger.info(f"🎤 STT: Azure | languages={languages}")
+    return azure.STT(
+        language=languages,
+        speech_key=os.environ.get("AZURE_SPEECH_KEY"),
+        speech_region=os.environ.get("AZURE_SPEECH_REGION"),
+    )
 
 
 def get_azure_tts():
@@ -629,7 +637,7 @@ async def entrypoint(ctx: JobContext):
                 logger.warning(f"_save_before_tts HTTP error: {e}")
 
     session = AgentSession(
-        stt=get_deepgram_stt(native_lang),
+        stt=get_azure_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=get_azure_tts(),
         vad=ctx.proc.userdata["vad"],

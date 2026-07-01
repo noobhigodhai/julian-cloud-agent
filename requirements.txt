@@ -1,3 +1,3 @@
-livekit-agents[openai,deepgram,silero,azure]
+livekit-agents[openai,silero,azure]
 livekit-plugins-azure
 openai
