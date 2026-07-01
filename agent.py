@@ -434,7 +434,9 @@ AZURE_VOICE_MAP = {
     "ru": "ru-RU-SvetlanaNeural",
     "it": "it-IT-ElsaNeural",
     "nl": "nl-NL-FennaNeural",
-    "en": "en-US-AvaMultilingualNeural",
+    # Dragon HD is Azure's newest generative voice model — naturally expressive
+    # without needing style tags, unlike AvaMultilingualNeural which has none.
+    "en": "en-US-Tiana:DragonHDFlashLatestNeural",
 }
 
 # Only set for voices that actually support the "cheerful" style (checked via
@@ -453,7 +455,7 @@ def get_deepgram_stt(native_lang: str | None):
 
 
 def get_azure_tts(native_lang: str | None):
-    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-AvaMultilingualNeural")
+    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-Tiana:DragonHDFlashLatestNeural")
     style_name = AZURE_STYLE_MAP.get(native_lang or "")
     style = StyleConfig(style=style_name) if style_name else NOT_GIVEN
     logger.info(f"🎙️ TTS: Azure Neural | voice={voice} | style={style_name or 'none'}")
