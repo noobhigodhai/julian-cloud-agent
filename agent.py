@@ -375,8 +375,7 @@ def _now() -> datetime:
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram, azure
-from livekit.plugins.azure.tts import ProsodyConfig, StyleConfig
-from livekit.agents.types import NOT_GIVEN
+from livekit.plugins.azure.tts import ProsodyConfig
 
 logging.basicConfig(
     level=logging.INFO,
@@ -404,12 +403,10 @@ DEEPGRAM_LANG_MAP = {
     "it": "it", "nl": "nl", "en": "en",
 }
 
-# en-IN-NeerjaIndicNeural (bilingual) has no expressive styles at all (verified
-# against Azure's voices/list API), so Indic languages use the styled
-# en-IN-NeerjaNeural instead — trades slightly weaker native-script pronunciation
-# for real emotional range (cheerful/empathetic), which matters more for Julian's
-# warm-coach persona since replies are already mostly English.
-INDIC_VOICE = "en-IN-NeerjaNeural"
+# Indic languages use the bilingual en-IN-NeerjaIndicNeural voice, not a native
+# single-language voice — Julian's replies are mostly-English with occasional
+# native words, and native-language voices read those English words robotically.
+INDIC_VOICE = "en-IN-NeerjaIndicNeural"
 
 AZURE_VOICE_MAP = {
     "hi": INDIC_VOICE,
@@ -434,17 +431,7 @@ AZURE_VOICE_MAP = {
     "ru": "ru-RU-SvetlanaNeural",
     "it": "it-IT-ElsaNeural",
     "nl": "nl-NL-FennaNeural",
-    # Dragon HD is Azure's newest generative voice model — naturally expressive
-    # without needing style tags, unlike AvaMultilingualNeural which has none.
-    "en": "en-US-Tiana:DragonHDFlashLatestNeural",
-}
-
-# Only set for voices that actually support the "cheerful" style (checked via
-# Azure's voices/list API) — everything else silently gets no style tag.
-AZURE_STYLE_MAP = {
-    "hi": "cheerful", "ta": "cheerful", "te": "cheerful",
-    "mr": "cheerful", "kn": "cheerful", "bn": "cheerful",
-    "fr": "cheerful", "ja": "cheerful", "zh": "cheerful",
+    "en": "en-US-AvaMultilingualNeural",
 }
 
 
@@ -455,14 +442,11 @@ def get_deepgram_stt(native_lang: str | None):
 
 
 def get_azure_tts(native_lang: str | None):
-    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-Tiana:DragonHDFlashLatestNeural")
-    style_name = AZURE_STYLE_MAP.get(native_lang or "")
-    style = StyleConfig(style=style_name) if style_name else NOT_GIVEN
-    logger.info(f"🎙️ TTS: Azure Neural | voice={voice} | style={style_name or 'none'}")
+    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-AvaMultilingualNeural")
+    logger.info(f"🎙️ TTS: Azure Neural | voice={voice}")
     return azure.TTS(
         voice=voice,
-        prosody=ProsodyConfig(rate=1.0),
-        style=style,
+        prosody=ProsodyConfig(rate=1.1),
         speech_key=os.environ.get("AZURE_SPEECH_KEY"),
         speech_region=os.environ.get("AZURE_SPEECH_REGION"),
     )
