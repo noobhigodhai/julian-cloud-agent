@@ -375,7 +375,7 @@ def _now() -> datetime:
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram, azure
-from livekit.plugins.azure import ProsodyConfig
+from livekit.plugins.azure.tts import ProsodyConfig
 
 logging.basicConfig(
     level=logging.INFO,
