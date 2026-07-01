@@ -404,7 +404,7 @@ DEEPGRAM_LANG_MAP = {
 }
 
 # Indic languages use the bilingual en-IN-NeerjaIndicNeural voice, not a native
-# single-language voice — Julian's replies are mostly-English with occasional
+# single-language voice — Stella's replies are mostly-English with occasional
 # native words, and native-language voices read those English words robotically.
 INDIC_VOICE = "en-IN-NeerjaIndicNeural"
 
@@ -431,7 +431,9 @@ AZURE_VOICE_MAP = {
     "ru": "ru-RU-SvetlanaNeural",
     "it": "it-IT-ElsaNeural",
     "nl": "nl-NL-FennaNeural",
-    "en": "en-US-AvaMultilingualNeural",
+    # Dragon HD Flash is Azure's newest generative voice model — American
+    # accent, more natural/fluent delivery than the classic Neural voices.
+    "en": "en-US-Tiana:DragonHDFlashLatestNeural",
 }
 
 
@@ -442,11 +444,11 @@ def get_deepgram_stt(native_lang: str | None):
 
 
 def get_azure_tts(native_lang: str | None):
-    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-AvaMultilingualNeural")
+    voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-Tiana:DragonHDFlashLatestNeural")
     logger.info(f"🎙️ TTS: Azure Neural | voice={voice}")
     return azure.TTS(
         voice=voice,
-        prosody=ProsodyConfig(rate=1.1),
+        prosody=ProsodyConfig(rate=1.0),
         speech_key=os.environ.get("AZURE_SPEECH_KEY"),
         speech_region=os.environ.get("AZURE_SPEECH_REGION"),
     )
@@ -491,7 +493,7 @@ Keep responses short — 1 to 2 sentences. Always ask a follow-up question.
 """
         logger.info("Language mode: English only")
 
-    return f"""You are Julian, a warm, fun, encouraging AI English coach on a phone call.
+    return f"""You are Stella, a warm, fun, encouraging AI English coach on a phone call.
 Keep responses SHORT — 1 to 2 sentences max. Be friendly and natural.
 Always ask a follow-up question to keep the conversation going.
 
@@ -504,7 +506,7 @@ LISTENING RULES:
 - Never interrupt. After you finish speaking, go straight into listening mode."""
 
 
-class JulianAgent(Agent):
+class StellaAgent(Agent):
     def __init__(self, topic=None, native_lang=None, on_tts_text=None):
         self._topic       = topic
         self._native_lang = native_lang
@@ -764,7 +766,7 @@ async def entrypoint(ctx: JobContext):
     logger.info(f"[session] call started at {start_time.isoformat()}")
 
     await session.start(
-        agent=JulianAgent(
+        agent=StellaAgent(
             topic=topic,
             native_lang=native_lang,
             on_tts_text=_save_before_tts,
