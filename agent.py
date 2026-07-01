@@ -406,7 +406,12 @@ DEEPGRAM_LANG_MAP = {
 # Stella always speaks English only (American accent) regardless of the
 # user's native language — Deepgram STT below still recognizes the user's
 # native language so they can be understood, but replies never switch language.
-STELLA_VOICE = "en-US-Tiana:DragonHDFlashLatestNeural"
+# NOTE: Dragon HD Flash voices (e.g. en-US-Tiana:DragonHDFlashLatestNeural) are
+# a newer preview-tier model with limited/inconsistent SSML support — they were
+# tried here and caused audible artifacts (literally reading punctuation like
+# "question mark" aloud). Stick to GA (non-preview) Neural voices in this
+# pipeline until that preview model matures.
+STELLA_VOICE = "en-US-AvaMultilingualNeural"
 
 
 def get_deepgram_stt(native_lang: str | None):
@@ -440,8 +445,16 @@ The user's native language is {lang_name} and they are learning English.
 They may speak to you in {lang_name} or English — understand either, but
 ALWAYS reply in English only, in an American English style. Never use any
 {lang_name} words in your replies, even a greeting — English only, always.
+
+WHEN THE USER SPEAKS IN {lang_name}:
+- Understand what they meant, then teach them how to say that exact thing in English.
+- Give them the English phrase directly, e.g. "You can say: I am doing well today."
+- Ask them to try saying it back to you in English.
+
+WHEN THE USER SPEAKS IN ENGLISH:
+- Gently correct any grammar mistakes by using the correct form in your reply.
+
 Be warm, encouraging, and natural. Keep responses short — 1 to 2 sentences.
-Gently correct any grammar mistakes by using the correct form in your reply.
 Always ask a follow-up question to keep them talking.
 ONLY speak the actual words. No stage directions, no labels, no brackets.
 """
