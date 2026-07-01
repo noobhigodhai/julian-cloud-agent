@@ -375,7 +375,8 @@ def _now() -> datetime:
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli
 from livekit.plugins import silero
 from livekit.plugins import openai, deepgram, azure
-from livekit.plugins.azure.tts import ProsodyConfig
+from livekit.plugins.azure.tts import ProsodyConfig, StyleConfig
+from livekit.agents.types import NOT_GIVEN
 
 logging.basicConfig(
     level=logging.INFO,
@@ -403,10 +404,12 @@ DEEPGRAM_LANG_MAP = {
     "it": "it", "nl": "nl", "en": "en",
 }
 
-# Indic languages use the bilingual en-IN-NeerjaIndicNeural voice, not a native
-# single-language voice — Julian's replies are mostly-English with occasional
-# native words, and native-language voices read those English words robotically.
-INDIC_VOICE = "en-IN-NeerjaIndicNeural"
+# en-IN-NeerjaIndicNeural (bilingual) has no expressive styles at all (verified
+# against Azure's voices/list API), so Indic languages use the styled
+# en-IN-NeerjaNeural instead — trades slightly weaker native-script pronunciation
+# for real emotional range (cheerful/empathetic), which matters more for Julian's
+# warm-coach persona since replies are already mostly English.
+INDIC_VOICE = "en-IN-NeerjaNeural"
 
 AZURE_VOICE_MAP = {
     "hi": INDIC_VOICE,
@@ -434,6 +437,14 @@ AZURE_VOICE_MAP = {
     "en": "en-US-AvaMultilingualNeural",
 }
 
+# Only set for voices that actually support the "cheerful" style (checked via
+# Azure's voices/list API) — everything else silently gets no style tag.
+AZURE_STYLE_MAP = {
+    "hi": "cheerful", "ta": "cheerful", "te": "cheerful",
+    "mr": "cheerful", "kn": "cheerful", "bn": "cheerful",
+    "fr": "cheerful", "ja": "cheerful", "zh": "cheerful",
+}
+
 
 def get_deepgram_stt(native_lang: str | None):
     lang_code = DEEPGRAM_LANG_MAP.get(native_lang or "", "en")
@@ -443,10 +454,13 @@ def get_deepgram_stt(native_lang: str | None):
 
 def get_azure_tts(native_lang: str | None):
     voice = AZURE_VOICE_MAP.get(native_lang or "", "en-US-AvaMultilingualNeural")
-    logger.info(f"🎙️ TTS: Azure Neural | voice={voice}")
+    style_name = AZURE_STYLE_MAP.get(native_lang or "")
+    style = StyleConfig(style=style_name) if style_name else NOT_GIVEN
+    logger.info(f"🎙️ TTS: Azure Neural | voice={voice} | style={style_name or 'none'}")
     return azure.TTS(
         voice=voice,
-        prosody=ProsodyConfig(rate=1.1),
+        prosody=ProsodyConfig(rate=1.0),
+        style=style,
         speech_key=os.environ.get("AZURE_SPEECH_KEY"),
         speech_region=os.environ.get("AZURE_SPEECH_REGION"),
     )
