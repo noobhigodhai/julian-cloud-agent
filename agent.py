@@ -429,31 +429,35 @@ def get_azure_stt(native_lang: str | None):
 
 
 def get_azure_tts(voice: str | None = None, voice_fallback: str | None = None):
-    # Dragon HD voices give a noticeably more natural/expressive voice than
-    # the GA multilingual voices, but coverage is per specific named voice,
-    # not blanket per-locale — and some are PublicPreview rather than GA.
-    # Each avatar uses the Dragon HD variant of the SAME base voice it was
-    # already using (voice identity stays consistent, only the tier
-    # upgrades). Per avatar (see avatars.json / server.js's /token, which
-    # resolves this from the `avatars` collection):
-    #   - Eva:   en-US-Ava:DragonHDLatestNeural      (PublicGA)
-    #   - Jyoti: en-IN-Neerja:DragonHDLatestNeural    (PublicGA)
-    #   - Enzo:  fil-PH-Angelo:DragonHDLatestNeural   (PublicPreview — newer/
-    #            less battle-tested than the other two; voiceFallback is set
-    #            to the plain fil-PH-AngeloNeural for this one specifically
-    #            in case Preview-tier availability/quality is inconsistent)
-    # NOTE: an earlier attempt at a DragonHD *Flash* voice
+    # Dragon HD was tried for all three avatars and reverted — this Azure
+    # Speech resource is provisioned in `eastasia`, which per Microsoft's own
+    # docs (learn.microsoft.com/azure/ai-services/speech-service/
+    # high-definition-voices, checked 2026-08) is NOT one of the regions
+    # Dragon HD supports (eastus, westeurope, southeastasia, westus2,
+    # eastus2, centralindia, canadacentral, francecentral, swedencentral —
+    # note southeastasia != eastasia, an easy mix-up). Every Dragon HD voice
+    # 400'd here regardless of which one was picked, which is the expected
+    # symptom of a region mismatch, not a bad voice name. On top of that,
+    # the en-IN and fil-PH names that were tried (Neerja, Diya, Angelo)
+    # aren't in Microsoft's current official DragonHDLatestNeural catalog at
+    # all (it only covers de-DE/en-US/es-ES/fr-FR/ja-JP/zh-CN) — a second,
+    # independent reason those specific two would never have worked.
+    # avatars.json now uses each avatar's plain standard voice. Revisit
+    # Dragon HD only if this Speech resource moves to a supported region —
+    # at that point en-US-Ava:DragonHDLatestNeural (Eva) is confirmed GA and
+    # safe to retry; en-IN/fil-PH would still need a real supported voice
+    # name, not the ones tried here.
+    #
+    # NOTE: an earlier, separate attempt at a DragonHD *Flash* voice
     # (en-US-Tiana:DragonHDFlashLatestNeural) caused audible SSML artifacts
-    # (it read punctuation like "question mark" aloud) — that was the Flash
-    # preview tier specifically, not the DragonHDLatestNeural tier used here.
+    # (it read punctuation like "question mark" aloud) — unrelated to the
+    # region issue above, but another reason to stay off Flash-tier voices.
     #
     # This only guards TTS-engine *construction* (e.g. malformed voice
-    # string) — Azure typically validates voice availability for a given
-    # speech resource/region lazily, on the first real synthesis call, which
-    # happens well after this returns. If a voice turns out to be
-    # unavailable for this Azure resource, that will surface as a runtime
-    # synthesis error mid-call, not here — watch the logs after enabling
-    # this for a given avatar.
+    # string) — Azure typically validates voice/region availability lazily,
+    # on the first real synthesis call, which happens well after this
+    # returns. A genuinely unavailable voice/region combo surfaces as a
+    # runtime synthesis error mid-call, not here.
     voice = voice or STELLA_VOICE
     logger.info(f"🎙️ TTS: Azure Neural | voice={voice}")
     try:
