@@ -428,17 +428,55 @@ def get_azure_stt(native_lang: str | None):
     )
 
 
-def get_azure_tts():
-    logger.info(f"🎙️ TTS: Azure Neural | voice={STELLA_VOICE}")
-    return azure.TTS(
-        voice=STELLA_VOICE,
-        prosody=ProsodyConfig(rate=1.0),
-        speech_key=os.environ.get("AZURE_SPEECH_KEY"),
-        speech_region=os.environ.get("AZURE_SPEECH_REGION"),
-    )
+def get_azure_tts(voice: str | None = None, voice_fallback: str | None = None):
+    # Dragon HD voices give a noticeably more natural/expressive voice than
+    # the GA multilingual voices, but coverage is per specific named voice,
+    # not blanket per-locale — and some are PublicPreview rather than GA.
+    # Each avatar uses the Dragon HD variant of the SAME base voice it was
+    # already using (voice identity stays consistent, only the tier
+    # upgrades). Per avatar (see avatars.json / server.js's /token, which
+    # resolves this from the `avatars` collection):
+    #   - Eva:   en-US-Ava:DragonHDLatestNeural      (PublicGA)
+    #   - Jyoti: en-IN-Neerja:DragonHDLatestNeural    (PublicGA)
+    #   - Enzo:  fil-PH-Angelo:DragonHDLatestNeural   (PublicPreview — newer/
+    #            less battle-tested than the other two; voiceFallback is set
+    #            to the plain fil-PH-AngeloNeural for this one specifically
+    #            in case Preview-tier availability/quality is inconsistent)
+    # NOTE: an earlier attempt at a DragonHD *Flash* voice
+    # (en-US-Tiana:DragonHDFlashLatestNeural) caused audible SSML artifacts
+    # (it read punctuation like "question mark" aloud) — that was the Flash
+    # preview tier specifically, not the DragonHDLatestNeural tier used here.
+    #
+    # This only guards TTS-engine *construction* (e.g. malformed voice
+    # string) — Azure typically validates voice availability for a given
+    # speech resource/region lazily, on the first real synthesis call, which
+    # happens well after this returns. If a voice turns out to be
+    # unavailable for this Azure resource, that will surface as a runtime
+    # synthesis error mid-call, not here — watch the logs after enabling
+    # this for a given avatar.
+    voice = voice or STELLA_VOICE
+    logger.info(f"🎙️ TTS: Azure Neural | voice={voice}")
+    try:
+        return azure.TTS(
+            voice=voice,
+            prosody=ProsodyConfig(rate=1.0),
+            speech_key=os.environ.get("AZURE_SPEECH_KEY"),
+            speech_region=os.environ.get("AZURE_SPEECH_REGION"),
+        )
+    except Exception as e:
+        fallback = voice_fallback or STELLA_VOICE
+        logger.warning(f"⚠️ TTS: voice={voice!r} failed to initialize ({e}) — falling back to {fallback!r}")
+        if fallback == voice:
+            raise
+        return azure.TTS(
+            voice=fallback,
+            prosody=ProsodyConfig(rate=1.0),
+            speech_key=os.environ.get("AZURE_SPEECH_KEY"),
+            speech_region=os.environ.get("AZURE_SPEECH_REGION"),
+        )
 
 
-def build_instructions(topic, native_lang_code):
+def build_instructions(topic, native_lang_code, persona_name: str | None = None, history_summary: str | None = None):
     lang_name = LANGUAGE_NAMES.get(native_lang_code or "", None)
 
     topic_line = (
@@ -475,7 +513,24 @@ Keep responses short — 1 to 2 sentences. Always ask a follow-up question.
 """
         logger.info("Language mode: English only")
 
-    return f"""You are Stella, a warm, fun, encouraging AI English coach on a phone call.
+    name = persona_name or "Stella"
+
+    # Durable takeaways from past calls (interests, likes/dislikes,
+    # recurring mistakes, communication style) — a short rolling summary
+    # maintained server-side (see callhistoryagent), not the raw transcript.
+    # Framed so the agent uses it naturally instead of announcing it.
+    history_block = ""
+    if history_summary:
+        history_block = f"""
+
+WHAT YOU KNOW ABOUT THIS LEARNER FROM PAST CALLS:
+{history_summary}
+Use this naturally to personalize the conversation (e.g. follow up on their
+interests, avoid repeating topics they've already covered). Never explicitly
+say "I remember" or "according to my notes" — just talk like a friend who
+already knows them."""
+
+    return f"""You are {name}, a warm, fun, encouraging AI English coach on a phone call.
 You speak ONLY in English, in an American English style — never any other
 language, regardless of the user's native language.
 Keep responses SHORT — 1 to 2 sentences max. Be friendly and natural.
@@ -484,6 +539,7 @@ Always ask a follow-up question to keep the conversation going.
 {topic_line}
 
 {lang_line}
+{history_block}
 
 LISTENING RULES:
 - Always wait for the user to fully finish speaking before responding.
@@ -491,11 +547,12 @@ LISTENING RULES:
 
 
 class StellaAgent(Agent):
-    def __init__(self, topic=None, native_lang=None, on_tts_text=None):
+    def __init__(self, topic=None, native_lang=None, persona_name=None, history_summary=None, on_tts_text=None):
         self._topic       = topic
         self._native_lang = native_lang
+        self._persona_name = persona_name or "Stella"
         self._on_tts_text = on_tts_text   # async fn(text: str)
-        super().__init__(instructions=build_instructions(topic, native_lang))
+        super().__init__(instructions=build_instructions(topic, native_lang, persona_name, history_summary))
 
     # ─── Intercept text RIGHT BEFORE it goes to TTS ───────────────────────────
     # tts_node gets an async iterator of text chunks from the LLM.
@@ -557,30 +614,45 @@ async def entrypoint(ctx: JobContext):
     user_id              = None
     topic                = None
     native_lang          = None
+    avatar_id            = None
+    persona_name         = None
+    voice                = None
+    voice_fallback       = None
+    history_summary      = None
 
     try:
-        job_meta    = json.loads(ctx.job.metadata or "{}")
-        user_email  = job_meta.get("email")
-        user_id     = job_meta.get("userId")
-        topic       = job_meta.get("topic")
-        native_lang = job_meta.get("nativeLang")
-        logger.info(f"[job_meta] userId={user_id} | topic={topic!r} | nativeLang={native_lang!r}")
+        job_meta        = json.loads(ctx.job.metadata or "{}")
+        user_email      = job_meta.get("email")
+        user_id         = job_meta.get("userId")
+        topic           = job_meta.get("topic")
+        native_lang     = job_meta.get("nativeLang")
+        avatar_id       = job_meta.get("avatarId")
+        persona_name    = job_meta.get("personaName")
+        voice           = job_meta.get("voice")
+        voice_fallback  = job_meta.get("voiceFallback")
+        history_summary = job_meta.get("historySummary")
+        logger.info(f"[job_meta] userId={user_id} | topic={topic!r} | nativeLang={native_lang!r} | avatarId={avatar_id!r} | persona={persona_name!r} | voice={voice!r}")
     except Exception as e:
         logger.warning(f"[job_meta] parse error: {e}")
 
     logger.info(f"[entrypoint] room={ctx.room.name}")
 
     def _parse_meta(participant):
-        nonlocal participant_identity, user_email, user_id, topic, native_lang
+        nonlocal participant_identity, user_email, user_id, topic, native_lang, avatar_id, persona_name, voice, voice_fallback, history_summary
         participant_identity = participant.identity
         raw_meta = participant.metadata or "{}"
         try:
-            meta        = json.loads(raw_meta)
-            user_email  = meta.get("email")      or user_email
-            user_id     = meta.get("userId")     or user_id
-            topic       = meta.get("topic")      or topic
-            native_lang = meta.get("nativeLang") or native_lang
-            logger.info(f"[participant_meta] identity={participant_identity} | topic={topic!r} | nativeLang={native_lang!r}")
+            meta             = json.loads(raw_meta)
+            user_email       = meta.get("email")           or user_email
+            user_id          = meta.get("userId")          or user_id
+            topic            = meta.get("topic")           or topic
+            native_lang      = meta.get("nativeLang")      or native_lang
+            avatar_id        = meta.get("avatarId")        or avatar_id
+            persona_name     = meta.get("personaName")     or persona_name
+            voice            = meta.get("voice")            or voice
+            voice_fallback   = meta.get("voiceFallback")    or voice_fallback
+            history_summary  = meta.get("historySummary")  or history_summary
+            logger.info(f"[participant_meta] identity={participant_identity} | topic={topic!r} | nativeLang={native_lang!r} | avatarId={avatar_id!r}")
         except Exception as e:
             logger.error(f"Participant metadata parse error: {e}")
 
@@ -639,7 +711,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=get_azure_stt(native_lang),
         llm=openai.LLM(model="gpt-4o-mini"),
-        tts=get_azure_tts(),
+        tts=get_azure_tts(voice, voice_fallback),
         vad=ctx.proc.userdata["vad"],
         allow_interruptions=True,
         min_endpointing_delay=0.3,
@@ -753,6 +825,8 @@ async def entrypoint(ctx: JobContext):
         agent=StellaAgent(
             topic=topic,
             native_lang=native_lang,
+            persona_name=persona_name,
+            history_summary=history_summary,
             on_tts_text=_save_before_tts,
         ),
         room=ctx.room,
