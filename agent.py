@@ -429,43 +429,55 @@ def get_azure_stt(native_lang: str | None):
 
 
 def get_azure_tts(voice: str | None = None, voice_fallback: str | None = None):
-    # Dragon HD was tried for all three avatars and reverted — this Azure
-    # Speech resource is provisioned in `eastasia`, which per Microsoft's own
-    # docs (learn.microsoft.com/azure/ai-services/speech-service/
-    # high-definition-voices, checked 2026-08) is NOT one of the regions
-    # Dragon HD supports (eastus, westeurope, southeastasia, westus2,
-    # eastus2, centralindia, canadacentral, francecentral, swedencentral —
-    # note southeastasia != eastasia, an easy mix-up). Every Dragon HD voice
-    # 400'd here regardless of which one was picked, which is the expected
-    # symptom of a region mismatch, not a bad voice name. On top of that,
-    # the en-IN and fil-PH names that were tried (Neerja, Diya, Angelo)
-    # aren't in Microsoft's current official DragonHDLatestNeural catalog at
-    # all (it only covers de-DE/en-US/es-ES/fr-FR/ja-JP/zh-CN) — a second,
-    # independent reason those specific two would never have worked.
-    # avatars.json now uses each avatar's plain standard voice. Revisit
-    # Dragon HD only if this Speech resource moves to a supported region —
-    # at that point en-US-Ava:DragonHDLatestNeural (Eva) is confirmed GA and
-    # safe to retry; en-IN/fil-PH would still need a real supported voice
-    # name, not the ones tried here.
+    # Dragon HD (base, Omni, and Flash tiers — verified via Microsoft's own
+    # docs, checked 2026-08) does NOT support the `eastasia` region at all —
+    # only eastus, westeurope, southeastasia, westus2, eastus2, centralindia,
+    # canadacentral, francecentral, swedencentral (note southeastasia !=
+    # eastasia). Every Dragon HD voice 400'd on the main AZURE_SPEECH_REGION
+    # resource regardless of which one was picked — that's a region
+    # mismatch, not a bad voice name, and no voice name fixes it.
     #
-    # NOTE: an earlier, separate attempt at a DragonHD *Flash* voice
+    # AZURE_TTS_KEY / AZURE_TTS_REGION let TTS point at a SEPARATE Azure
+    # Speech resource provisioned in a supported region (e.g. centralindia),
+    # while STT keeps using the main AZURE_SPEECH_KEY/REGION resource (no
+    # region restriction applies to STT, so no reason to move it too). If
+    # AZURE_TTS_KEY/REGION aren't set, this falls back to the main resource
+    # exactly as before — safe to deploy before those env vars exist.
+    #
+    # Once AZURE_TTS_REGION is set to a supported region:
+    #   - Eva (en-US-Ava:DragonHDLatestNeural) is in Microsoft's official
+    #     base DragonHD catalog (GA) — safe to use directly.
+    #   - Jyoti/Enzo have no en-IN/fil-PH entry in the base DragonHD catalog
+    #     at all. Dragon HD Omni's documented naming convention upgrades ANY
+    #     existing standard neural voice via
+    #     "<locale>-<Name>:DragonHDOmniLatestNeural" (Microsoft's own example:
+    #     de-DE-ConradNeural -> de-DE-Conrad:DragonHDOmniLatestNeural), so
+    #     en-IN-Neerja:DragonHDOmniLatestNeural and
+    #     fil-PH-Angelo:DragonHDOmniLatestNeural are the documented-pattern
+    #     guesses for them — plausible but NOT individually confirmed in
+    #     Microsoft's voice list the way Eva's is, so watch the logs the
+    #     first time each is used.
+    #
+    # NOTE: a separate, earlier attempt at a DragonHD *Flash* voice
     # (en-US-Tiana:DragonHDFlashLatestNeural) caused audible SSML artifacts
     # (it read punctuation like "question mark" aloud) — unrelated to the
     # region issue above, but another reason to stay off Flash-tier voices.
     #
-    # This only guards TTS-engine *construction* (e.g. malformed voice
-    # string) — Azure typically validates voice/region availability lazily,
-    # on the first real synthesis call, which happens well after this
+    # The try/except below only guards TTS-engine *construction* (e.g.
+    # malformed voice string) — Azure validates voice/region availability
+    # lazily, on the first real synthesis call, which happens after this
     # returns. A genuinely unavailable voice/region combo surfaces as a
     # runtime synthesis error mid-call, not here.
     voice = voice or STELLA_VOICE
-    logger.info(f"🎙️ TTS: Azure Neural | voice={voice}")
+    tts_key = os.environ.get("AZURE_TTS_KEY") or os.environ.get("AZURE_SPEECH_KEY")
+    tts_region = os.environ.get("AZURE_TTS_REGION") or os.environ.get("AZURE_SPEECH_REGION")
+    logger.info(f"🎙️ TTS: Azure Neural | voice={voice} | region={tts_region}")
     try:
         return azure.TTS(
             voice=voice,
             prosody=ProsodyConfig(rate=1.0),
-            speech_key=os.environ.get("AZURE_SPEECH_KEY"),
-            speech_region=os.environ.get("AZURE_SPEECH_REGION"),
+            speech_key=tts_key,
+            speech_region=tts_region,
         )
     except Exception as e:
         fallback = voice_fallback or STELLA_VOICE
@@ -475,8 +487,8 @@ def get_azure_tts(voice: str | None = None, voice_fallback: str | None = None):
         return azure.TTS(
             voice=fallback,
             prosody=ProsodyConfig(rate=1.0),
-            speech_key=os.environ.get("AZURE_SPEECH_KEY"),
-            speech_region=os.environ.get("AZURE_SPEECH_REGION"),
+            speech_key=tts_key,
+            speech_region=tts_region,
         )
 
 
